@@ -1,0 +1,26 @@
+[vesc]
+host = "10.0.0.191"
+port = 65102
+thor_can_id = 3
+bms_can_id = 4
+timeout_seconds = 3.0
+poll_interval_seconds = 2.0
+static_refresh_every_polls = 30
+
+[mqtt]
+host = "homeassistant.local"
+port = 1883
+username = ""
+password = ""
+client_id = "onewheel-ha-bridge"
+keepalive_seconds = 30
+
+[home_assistant]
+discovery_prefix = "homeassistant"
+base_topic = "onewheel/custom_xr"
+device_name = "Custom Onewheel"
+device_id = "custom_onewheel"
+manufacturer = "Custom / VESC"
+model = "Thor400v2 + ENNOID XLITE 32 V4"
+controller_name = "Thor400v2"
+bms_name = "ENNOID-XLITE-32-V4"
