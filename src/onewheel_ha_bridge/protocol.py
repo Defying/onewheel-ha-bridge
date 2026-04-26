@@ -18,6 +18,8 @@ COMM_FORWARD_CAN = 34
 COMM_CUSTOM_APP_DATA = 36
 COMM_PING_CAN = 62
 COMM_BMS_GET_VALUES = 96
+COMM_BMS_SET_CHARGE_ALLOWED = 97
+COMM_BMS_SET_BALANCE_OVERRIDE = 98
 
 REFLOAT_INTERFACE_ID = 101
 REFLOAT_INFO = 0
@@ -210,6 +212,31 @@ class VescTcpClient:
                         time.sleep(0.2 * attempt)
         raise VescProtocolError(f"query failed after {retries} attempts: {last_error}")
 
+    def send(self, payload: Iterable[int] | bytes, retries: int = 3) -> None:
+        """Send a command frame without waiting for a response.
+
+        Some BMS write commands are fire-and-forget in VESC firmware. This is
+        intentionally separate from query() so command callers cannot
+        accidentally block waiting for a response that will never arrive.
+        """
+        if not isinstance(payload, bytes):
+            payload = bytes(payload)
+        frame = self._encode_frame(payload)
+        last_error: Exception | None = None
+        for attempt in range(1, retries + 1):
+            with socket.socket() as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                try:
+                    sock.connect((self.config.host, self.config.port))
+                    sock.sendall(frame)
+                    return
+                except Exception as exc:  # noqa: BLE001 - network protocol wrapper
+                    last_error = exc
+                    LOG.debug("send attempt %s failed for payload %s: %s", attempt, payload.hex(), exc)
+                    if attempt < retries:
+                        time.sleep(0.2 * attempt)
+        raise VescProtocolError(f"send failed after {retries} attempts: {last_error}")
+
     def forward_can(self, can_id: int, payload: Iterable[int] | bytes) -> bytes:
         if not isinstance(payload, bytes):
             payload = bytes(payload)
@@ -342,6 +369,16 @@ class VescTcpClient:
             lambda: self.query(bytes([COMM_BMS_GET_VALUES])),
             self.get_bms_values_from_payload,
         )
+
+    def set_bms_charge_allowed(self, allowed: bool) -> None:
+        self.send(bytes([COMM_BMS_SET_CHARGE_ALLOWED, 1 if allowed else 0]))
+
+    def set_bms_balance_override(self, cell_index_0_based: int, override: int) -> None:
+        if cell_index_0_based < 0:
+            raise ValueError("cell index must be >= 0")
+        if override not in {0, 1, 2}:
+            raise ValueError("balance override must be 0, 1, or 2")
+        self.send(bytes([COMM_BMS_SET_BALANCE_OVERRIDE, cell_index_0_based, override]))
 
     def get_bms_values_from_payload(self, payload: bytes) -> BmsValues:
         buffer = Buffer(payload)

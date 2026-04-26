@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import HomeAssistantConfig
+from .config import ControlsConfig, HomeAssistantConfig
 from .models import TelemetrySnapshot
 
 
@@ -20,6 +20,22 @@ class EntityDefinition:
     payload_on: str | None = None
     payload_off: str | None = None
     suggested_display_precision: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ButtonDefinition:
+    key: str
+    name: str
+    action: str
+    icon: str
+
+
+BUTTON_DEFINITIONS: tuple[ButtonDefinition, ...] = (
+    ButtonDefinition("allow_charging", "Allow Charging", "allow_charging", "mdi:battery-plus"),
+    ButtonDefinition("disable_charging", "Disable Charging", "disable_charging", "mdi:battery-minus"),
+    ButtonDefinition("allow_balancing", "Allow Balancing", "allow_balancing", "mdi:battery-sync"),
+    ButtonDefinition("disable_balancing", "Disable Balancing", "disable_balancing", "mdi:battery-off-outline"),
+)
 
 
 ENTITY_DEFINITIONS: tuple[EntityDefinition, ...] = (
@@ -64,6 +80,18 @@ def availability_topic(config: HomeAssistantConfig) -> str:
     return f"{config.base_topic}/availability"
 
 
+def command_topic(ha_config: HomeAssistantConfig, controls_config: ControlsConfig | None = None) -> str:
+    if controls_config and controls_config.command_topic:
+        return controls_config.command_topic
+    return f"{ha_config.base_topic}/command"
+
+
+def command_status_topic(ha_config: HomeAssistantConfig, controls_config: ControlsConfig | None = None) -> str:
+    if controls_config and controls_config.status_topic:
+        return controls_config.status_topic
+    return f"{ha_config.base_topic}/command_status"
+
+
 def discovery_topic(config: HomeAssistantConfig, entity: EntityDefinition) -> str:
     object_id = f"{config.device_id}_{entity.key}"
     return f"{config.discovery_prefix}/{entity.component}/{config.device_id}/{object_id}/config"
@@ -86,7 +114,11 @@ def build_device(config: HomeAssistantConfig, snapshot: TelemetrySnapshot | None
     return device
 
 
-def build_discovery_payloads(config: HomeAssistantConfig, snapshot: TelemetrySnapshot | None = None) -> list[tuple[str, dict]]:
+def build_discovery_payloads(
+    config: HomeAssistantConfig,
+    snapshot: TelemetrySnapshot | None = None,
+    controls_config: ControlsConfig | None = None,
+) -> list[tuple[str, dict]]:
     state = state_topic(config)
     availability = availability_topic(config)
     device = build_device(config, snapshot)
@@ -121,4 +153,52 @@ def build_discovery_payloads(config: HomeAssistantConfig, snapshot: TelemetrySna
         if entity.suggested_display_precision is not None:
             payload["suggested_display_precision"] = entity.suggested_display_precision
         payloads.append((discovery_topic(config, entity), payload))
+
+    if controls_config and controls_config.enabled:
+        status_entity = EntityDefinition(
+            "sensor",
+            "command_status",
+            "Command Status",
+            "{{ value_json.status }}: {{ value_json.message }}",
+            icon="mdi:shield-check",
+            entity_category="diagnostic",
+        )
+        payloads.append(
+            (
+                discovery_topic(config, status_entity),
+                {
+                    "name": status_entity.name,
+                    "unique_id": f"{config.device_id}_{status_entity.key}",
+                    "state_topic": command_status_topic(config, controls_config),
+                    "availability_topic": availability,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "value_template": status_entity.value_template,
+                    "json_attributes_topic": command_status_topic(config, controls_config),
+                    "device": device,
+                    "object_id": f"{config.device_id}_{status_entity.key}",
+                    "icon": status_entity.icon,
+                    "entity_category": status_entity.entity_category,
+                },
+            )
+        )
+        for button in BUTTON_DEFINITIONS:
+            unique_id = f"{config.device_id}_{button.key}"
+            payloads.append(
+                (
+                    f"{config.discovery_prefix}/button/{config.device_id}/{unique_id}/config",
+                    {
+                        "name": button.name,
+                        "unique_id": unique_id,
+                        "command_topic": command_topic(config, controls_config),
+                        "payload_press": button.action,
+                        "availability_topic": availability,
+                        "payload_available": "online",
+                        "payload_not_available": "offline",
+                        "device": device,
+                        "object_id": unique_id,
+                        "icon": button.icon,
+                    },
+                )
+            )
     return payloads

@@ -6,6 +6,10 @@ from pathlib import Path
 import tomllib
 
 
+def _bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(slots=True)
 class VescConfig:
     host: str = "10.0.0.191"
@@ -40,10 +44,24 @@ class HomeAssistantConfig:
 
 
 @dataclass(slots=True)
+class ControlsConfig:
+    # Battery control writes are disabled unless explicitly enabled. When
+    # enabled, Home Assistant MQTT button entities can request only the guarded
+    # BMS actions implemented in bridge.py.
+    enabled: bool = False
+    command_topic: str | None = None
+    status_topic: str | None = None
+    require_safe_state: bool = True
+    max_control_speed_mph: float = 0.5
+    command_cooldown_seconds: float = 1.0
+
+
+@dataclass(slots=True)
 class BridgeConfig:
     vesc: VescConfig
     mqtt: MqttConfig
     home_assistant: HomeAssistantConfig
+    controls: ControlsConfig
 
 
 _ENV_MAP: dict[tuple[str, str], tuple[str, object]] = {
@@ -68,6 +86,12 @@ _ENV_MAP: dict[tuple[str, str], tuple[str, object]] = {
     ("home_assistant", "model"): ("OWHB_DEVICE_MODEL", str),
     ("home_assistant", "controller_name"): ("OWHB_CONTROLLER_NAME", str),
     ("home_assistant", "bms_name"): ("OWHB_BMS_NAME", str),
+    ("controls", "enabled"): ("OWHB_CONTROLS_ENABLED", _bool),
+    ("controls", "command_topic"): ("OWHB_CONTROLS_COMMAND_TOPIC", str),
+    ("controls", "status_topic"): ("OWHB_CONTROLS_STATUS_TOPIC", str),
+    ("controls", "require_safe_state"): ("OWHB_CONTROLS_REQUIRE_SAFE_STATE", _bool),
+    ("controls", "max_control_speed_mph"): ("OWHB_CONTROLS_MAX_SPEED_MPH", float),
+    ("controls", "command_cooldown_seconds"): ("OWHB_CONTROLS_COOLDOWN", float),
 }
 
 
@@ -110,4 +134,5 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
     vesc = VescConfig(**data.get("vesc", {}))
     mqtt = MqttConfig(**data.get("mqtt", {}))
     home_assistant = HomeAssistantConfig(**data.get("home_assistant", {}))
-    return BridgeConfig(vesc=vesc, mqtt=mqtt, home_assistant=home_assistant)
+    controls = ControlsConfig(**data.get("controls", {}))
+    return BridgeConfig(vesc=vesc, mqtt=mqtt, home_assistant=home_assistant, controls=controls)

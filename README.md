@@ -1,6 +1,6 @@
 # onewheel-ha-bridge
 
-read-only bridge from a VESC TCP endpoint to Home Assistant via MQTT discovery.
+VESC TCP endpoint to Home Assistant bridge via MQTT discovery. Telemetry is read-only by default; optional BMS controls are guarded and opt-in.
 
 this project polls a custom Onewheel's VESC/Refloat/BMS telemetry and publishes:
 - retained Home Assistant MQTT discovery payloads
@@ -9,15 +9,21 @@ this project polls a custom Onewheel's VESC/Refloat/BMS telemetry and publishes:
 
 ## design
 
-**read-only only.**
-The bridge only uses these proven-safe reads:
+**read-only by default.**
+The bridge uses these proven-safe reads:
 - `COMM_FW_VERSION`
 - `COMM_PING_CAN`
 - `COMM_FORWARD_CAN + COMM_GET_VALUES` for Thor controller telemetry
 - `COMM_BMS_GET_VALUES` for ENNOID BMS telemetry
 - `COMM_FORWARD_CAN + COMM_CUSTOM_APP_DATA` for Refloat `INFO`, `REALTIME_DATA_IDS`, and `REALTIME_DATA`
 
-It does **not** send duty/current/rpm/servo/config/update/balance override/control commands.
+It does **not** send duty/current/rpm/servo/config/update commands.
+
+Optional BMS controls can be enabled explicitly with `[controls].enabled = true`. Those controls are limited to:
+- `COMM_BMS_SET_CHARGE_ALLOWED` with payload `1` or `0`
+- `COMM_BMS_SET_BALANCE_OVERRIDE` for every discovered cell, with override `0` (allow automatic balancing) or `1` (disable balancing)
+
+The bridge rejects control requests unless telemetry says the board is connected and not running, and the command topic is ignored entirely while controls are disabled.
 
 ## what shows up in Home Assistant
 
@@ -38,6 +44,8 @@ Using the default config:
 - state topic: `onewheel/custom_xr/state`
 - raw topic: `onewheel/custom_xr/raw`
 - availability topic: `onewheel/custom_xr/availability`
+- guarded control command topic: `onewheel/custom_xr/command` (only subscribed when enabled)
+- guarded control status topic: `onewheel/custom_xr/command_status` (only published when enabled)
 
 ## requirements
 
@@ -106,6 +114,26 @@ docker compose up -d --build
 
 If this runs on the Orange Pi next to Mosquitto, set `mqtt.host` to the reachable broker host/IP/container DNS name used by that stack.
 
+## guarded controls
+
+Controls are off by default. To expose Home Assistant MQTT buttons for charging/balancing controls:
+
+```toml
+[controls]
+enabled = true
+require_safe_state = true
+max_control_speed_mph = 0.5
+command_cooldown_seconds = 1.0
+```
+
+Home Assistant buttons publish one of these payloads to `onewheel/custom_xr/command`:
+- `allow_charging`
+- `disable_charging`
+- `allow_balancing`
+- `disable_balancing`
+
+The command handler runs on the bridge loop, not directly in the MQTT callback, so writes do not overlap normal telemetry polling. A retained `Command Status` sensor reports queued/ok/rejected outcomes.
+
 ## environment variable overrides
 
 You can override common settings without editing the file:
@@ -122,6 +150,12 @@ You can override common settings without editing the file:
 - `OWHB_HA_BASE_TOPIC`
 - `OWHB_DEVICE_NAME`
 - `OWHB_DEVICE_ID`
+- `OWHB_CONTROLS_ENABLED`
+- `OWHB_CONTROLS_COMMAND_TOPIC`
+- `OWHB_CONTROLS_STATUS_TOPIC`
+- `OWHB_CONTROLS_REQUIRE_SAFE_STATE`
+- `OWHB_CONTROLS_MAX_SPEED_MPH`
+- `OWHB_CONTROLS_COOLDOWN`
 
 ## Home Assistant notes
 

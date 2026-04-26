@@ -24,3 +24,15 @@ manufacturer = "Custom / VESC"
 model = "Thor400v2 + ENNOID XLITE 32 V4"
 controller_name = "Thor400v2"
 bms_name = "ENNOID-XLITE-32-V4"
+
+[controls]
+# Guarded BMS write controls are disabled by default. Enable only if you accept
+# Home Assistant buttons for allow/disable charging and balancing.
+enabled = false
+# Defaults to "<home_assistant.base_topic>/command" if blank/commented.
+# command_topic = "onewheel/custom_xr/command"
+# Defaults to "<home_assistant.base_topic>/command_status" if blank/commented.
+# status_topic = "onewheel/custom_xr/command_status"
+require_safe_state = true
+max_control_speed_mph = 0.5
+command_cooldown_seconds = 1.0
