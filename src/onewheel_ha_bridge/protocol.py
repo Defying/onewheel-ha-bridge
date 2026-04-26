@@ -20,6 +20,7 @@ COMM_PING_CAN = 62
 COMM_BMS_GET_VALUES = 96
 COMM_BMS_SET_CHARGE_ALLOWED = 97
 COMM_BMS_SET_BALANCE_OVERRIDE = 98
+COMM_BMS_FORCE_BALANCE = 100
 
 REFLOAT_INTERFACE_ID = 101
 REFLOAT_INFO = 0
@@ -388,6 +389,13 @@ class VescTcpClient:
         if override not in {0, 1, 2}:
             raise ValueError("balance override must be 0, 1, or 2")
         payload = bytes([COMM_BMS_SET_BALANCE_OVERRIDE, cell_index_0_based, override])
+        if can_id is None:
+            self.send(payload)
+        else:
+            self.send_forward_can(can_id, payload)
+
+    def force_bms_balance(self, enabled: bool, can_id: int | None = None) -> None:
+        payload = bytes([COMM_BMS_FORCE_BALANCE, 1 if enabled else 0])
         if can_id is None:
             self.send(payload)
         else:

@@ -150,16 +150,12 @@ class OnewheelBridge:
             self.client.set_bms_charge_allowed(True, can_id=bms_can_id)
             message = f"charging allowed via BMS CAN {bms_can_id}"
         elif command.action == "disable_charging":
-            self.client.set_bms_charge_allowed(False, can_id=bms_can_id)
-            message = f"charging disabled via BMS CAN {bms_can_id}"
-        elif command.action in {"allow_balancing", "disable_balancing"}:
-            if not snapshot.bms or not snapshot.bms.cells_v:
-                raise VescProtocolError("cell list unavailable; cannot target balance overrides")
-            override = 0 if command.action == "allow_balancing" else 1
-            for cell_index in range(len(snapshot.bms.cells_v)):
-                self.client.set_bms_balance_override(cell_index, override, can_id=bms_can_id)
-                time.sleep(0.02)
-            message = f"balancing {'allowed' if override == 0 else 'disabled'} for {len(snapshot.bms.cells_v)} cells via BMS CAN {bms_can_id}"
+            raise VescProtocolError("disable charging is not supported by the verified ENNOID command path")
+        elif command.action == "allow_balancing":
+            self.client.force_bms_balance(True, can_id=bms_can_id)
+            message = f"force balancing enabled via BMS CAN {bms_can_id}"
+        elif command.action == "disable_balancing":
+            raise VescProtocolError("disable balancing is not supported by the verified ENNOID command path")
         else:  # pragma: no cover - protected by enqueue validation
             raise VescProtocolError(f"unknown action {command.action}")
 

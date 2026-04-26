@@ -49,9 +49,18 @@ class ControlsTests(unittest.TestCase):
             client.set_bms_charge_allowed(False, can_id=5)
             client.set_bms_balance_override(31, 0, can_id=5)
             client.set_bms_balance_override(31, 1, can_id=5)
+            client.force_bms_balance(True, can_id=5)
+            client.force_bms_balance(False, can_id=5)
         self.assertEqual(
             [call.args[0] for call in send.call_args_list],
-            [bytes([34, 5, 97, 1]), bytes([34, 5, 97, 0]), bytes([34, 5, 98, 31, 0]), bytes([34, 5, 98, 31, 1])],
+            [
+                bytes([34, 5, 97, 1]),
+                bytes([34, 5, 97, 0]),
+                bytes([34, 5, 98, 31, 0]),
+                bytes([34, 5, 98, 31, 1]),
+                bytes([34, 5, 100, 1]),
+                bytes([34, 5, 100, 0]),
+            ],
         )
 
 

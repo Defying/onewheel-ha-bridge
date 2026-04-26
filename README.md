@@ -20,10 +20,10 @@ The bridge uses these proven-safe reads:
 It does **not** send duty/current/rpm/servo/config/update commands.
 
 Optional BMS controls can be enabled explicitly with `[controls].enabled = true`. Those controls are limited to:
-- `COMM_FORWARD_CAN + COMM_BMS_SET_CHARGE_ALLOWED` with payload `1` or `0`
-- `COMM_FORWARD_CAN + COMM_BMS_SET_BALANCE_OVERRIDE` for every discovered cell, with override `0` (allow automatic balancing) or `1` (disable balancing)
+- `COMM_FORWARD_CAN + COMM_BMS_SET_CHARGE_ALLOWED` with payload `1` to allow charging
+- `COMM_FORWARD_CAN + COMM_BMS_FORCE_BALANCE` with payload `1` to force balancing
 
-The bridge rejects control requests unless telemetry says the board is connected and not running, and the command topic is ignored entirely while controls are disabled.
+The verified ENNOID command handler does not implement safe false/disable semantics for charging or balancing in the same path, so the bridge rejects `disable_charging` and `disable_balancing` rather than guessing. The bridge also rejects control requests unless telemetry says the board is connected and not running, and the command topic is ignored entirely while controls are disabled.
 
 ## what shows up in Home Assistant
 
@@ -127,10 +127,10 @@ command_cooldown_seconds = 1.0
 ```
 
 Home Assistant buttons publish one of these payloads to `onewheel/custom_xr/command`:
-- `allow_charging`
-- `disable_charging`
-- `allow_balancing`
-- `disable_balancing`
+- `allow_charging` — verified implemented by ENNOID
+- `allow_balancing` — verified implemented by ENNOID as force-balance/all-time balancing
+- `disable_charging` — rejected; ENNOID's verified command path does not safely disable charging
+- `disable_balancing` — rejected; ENNOID's verified command path does not safely disable balancing
 
 The command handler runs on the bridge loop, not directly in the MQTT callback, so writes do not overlap normal telemetry polling. A retained `Command Status` sensor reports queued/ok/rejected outcomes.
 
