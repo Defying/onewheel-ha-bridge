@@ -4,6 +4,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 
+ENNOID_CHARGING_CURRENT_THRESHOLD_A = 0.5
+
+
 @dataclass(slots=True)
 class FirmwareInfo:
     major: int
@@ -97,6 +100,22 @@ class BmsValues:
             return None
         return self.max_cell_v - self.min_cell_v
 
+    @property
+    def charging(self) -> bool:
+        # ENNOID's COMM_BMS_GET_VALUES does not expose a charging flag or
+        # chargeAllowed state. In this firmware positive pack current means
+        # current is flowing into the pack; the firmware's own charger-enabled
+        # threshold defaults to 0.5 A.
+        return self.current_a > ENNOID_CHARGING_CURRENT_THRESHOLD_A
+
+    @property
+    def balancing_active(self) -> bool:
+        return any(self.balancing_state)
+
+    @property
+    def balancing_cell_count(self) -> int:
+        return sum(1 for active in self.balancing_state if active)
+
     def cell_voltage(self, index_1_based: int) -> float | None:
         if index_1_based < 1 or index_1_based > len(self.cells_v):
             return None
@@ -176,6 +195,9 @@ class TelemetrySnapshot:
             payload["bms"]["max_cell_v"] = self.bms.max_cell_v
             payload["bms"]["max_cell_index"] = self.bms.max_cell_index
             payload["bms"]["cell_delta_v"] = self.bms.cell_delta_v
+            payload["bms"]["charging"] = self.bms.charging
+            payload["bms"]["balancing_active"] = self.bms.balancing_active
+            payload["bms"]["balancing_cell_count"] = self.bms.balancing_cell_count
         if self.refloat_info:
             payload["refloat_info"] = asdict(self.refloat_info)
         if self.refloat_realtime:
@@ -203,6 +225,9 @@ class TelemetrySnapshot:
                     "cell_delta_v": self.bms.cell_delta_v,
                     "cell_delta_mv": round((self.bms.cell_delta_v or 0.0) * 1000.0, 1),
                     "cell_19_v": self.bms.cell_voltage(19),
+                    "charging": self.bms.charging,
+                    "balancing_active": self.bms.balancing_active,
+                    "balancing_cell_count": self.bms.balancing_cell_count,
                 }
             )
         if self.controller:
@@ -226,7 +251,7 @@ class TelemetrySnapshot:
         if self.refloat_realtime:
             state.update(
                 {
-                    "charging": self.refloat_realtime.charging,
+                    "refloat_charging": self.refloat_realtime.charging,
                     "wheelslip": self.refloat_realtime.wheelslip,
                     "alerts_active": self.refloat_realtime.alerts_active,
                     "ready": self.refloat_realtime.package_state in {"READY", "RUNNING"},

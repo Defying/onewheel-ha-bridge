@@ -32,9 +32,7 @@ class ButtonDefinition:
 
 BUTTON_DEFINITIONS: tuple[ButtonDefinition, ...] = (
     ButtonDefinition("allow_charging", "Allow Charging", "allow_charging", "mdi:battery-plus"),
-    ButtonDefinition("disable_charging", "Disable Charging", "disable_charging", "mdi:battery-minus"),
-    ButtonDefinition("allow_balancing", "Allow Balancing", "allow_balancing", "mdi:battery-sync"),
-    ButtonDefinition("disable_balancing", "Disable Balancing", "disable_balancing", "mdi:battery-off-outline"),
+    ButtonDefinition("allow_balancing", "Force Balancing", "allow_balancing", "mdi:battery-sync"),
 )
 
 
@@ -52,6 +50,9 @@ ENTITY_DEFINITIONS: tuple[EntityDefinition, ...] = (
     EntityDefinition("sensor", "speed_kph", "Speed (km/h)", "{{ value_json.speed_kph }}", "km/h", "speed", "measurement", suggested_display_precision=2),
     EntityDefinition("sensor", "duty_cycle_pct", "Duty Cycle", "{{ value_json.duty_cycle_pct }}", "%", None, "measurement", icon="mdi:sine-wave", suggested_display_precision=2),
     EntityDefinition("binary_sensor", "charging", "Charging", "{{ 'ON' if value_json.charging else 'OFF' }}", device_class="battery_charging", payload_on="ON", payload_off="OFF"),
+    EntityDefinition("binary_sensor", "balancing_active", "Balancing Active", "{{ 'ON' if value_json.balancing_active else 'OFF' }}", icon="mdi:battery-sync", payload_on="ON", payload_off="OFF"),
+    EntityDefinition("sensor", "balancing_cell_count", "Balancing Cell Count", "{{ value_json.balancing_cell_count }}", icon="mdi:battery-sync", state_class="measurement"),
+    EntityDefinition("binary_sensor", "refloat_charging", "Refloat Charging Flag", "{{ 'ON' if value_json.refloat_charging else 'OFF' }}", icon="mdi:battery-clock", entity_category="diagnostic", payload_on="ON", payload_off="OFF"),
     EntityDefinition("binary_sensor", "wheelslip", "Wheelslip", "{{ 'ON' if value_json.wheelslip else 'OFF' }}", icon="mdi:car-traction-control", payload_on="ON", payload_off="OFF"),
     EntityDefinition("binary_sensor", "alerts_active", "Alerts Active", "{{ 'ON' if value_json.alerts_active else 'OFF' }}", device_class="problem", payload_on="ON", payload_off="OFF"),
     EntityDefinition("binary_sensor", "ready", "Ready", "{{ 'ON' if value_json.ready else 'OFF' }}", payload_on="ON", payload_off="OFF", icon="mdi:check-circle-outline"),

@@ -19,10 +19,10 @@ class ControlsTests(unittest.TestCase):
         ha = HomeAssistantConfig(device_id="custom_onewheel")
         payloads = build_discovery_payloads(ha, controls_config=ControlsConfig(enabled=True))
         button_payloads = [payload for topic, payload in payloads if "/button/" in topic]
-        self.assertEqual(len(button_payloads), 4)
+        self.assertEqual(len(button_payloads), 2)
         self.assertEqual(
             {payload["payload_press"] for payload in button_payloads},
-            {"allow_charging", "disable_charging", "allow_balancing", "disable_balancing"},
+            {"allow_charging", "allow_balancing"},
         )
         self.assertTrue(all(payload["command_topic"] == "onewheel/custom_xr/command" for payload in button_payloads))
 
