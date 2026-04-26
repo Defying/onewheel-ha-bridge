@@ -42,6 +42,18 @@ class ControlsTests(unittest.TestCase):
             [bytes([97, 1]), bytes([97, 0]), bytes([98, 31, 0]), bytes([98, 31, 1])],
         )
 
+    def test_bms_write_payloads_can_forwarded(self) -> None:
+        client = VescTcpClient(VescConfig())
+        with patch.object(client, "send") as send:
+            client.set_bms_charge_allowed(True, can_id=5)
+            client.set_bms_charge_allowed(False, can_id=5)
+            client.set_bms_balance_override(31, 0, can_id=5)
+            client.set_bms_balance_override(31, 1, can_id=5)
+        self.assertEqual(
+            [call.args[0] for call in send.call_args_list],
+            [bytes([34, 5, 97, 1]), bytes([34, 5, 97, 0]), bytes([34, 5, 98, 31, 0]), bytes([34, 5, 98, 31, 1])],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

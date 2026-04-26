@@ -20,8 +20,8 @@ The bridge uses these proven-safe reads:
 It does **not** send duty/current/rpm/servo/config/update commands.
 
 Optional BMS controls can be enabled explicitly with `[controls].enabled = true`. Those controls are limited to:
-- `COMM_BMS_SET_CHARGE_ALLOWED` with payload `1` or `0`
-- `COMM_BMS_SET_BALANCE_OVERRIDE` for every discovered cell, with override `0` (allow automatic balancing) or `1` (disable balancing)
+- `COMM_FORWARD_CAN + COMM_BMS_SET_CHARGE_ALLOWED` with payload `1` or `0`
+- `COMM_FORWARD_CAN + COMM_BMS_SET_BALANCE_OVERRIDE` for every discovered cell, with override `0` (allow automatic balancing) or `1` (disable balancing)
 
 The bridge rejects control requests unless telemetry says the board is connected and not running, and the command topic is ignored entirely while controls are disabled.
 

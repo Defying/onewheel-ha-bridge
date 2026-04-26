@@ -106,6 +106,14 @@ class OnewheelBridge:
         self._last_snapshot = snapshot
         return snapshot
 
+    def _effective_bms_can_id(self, snapshot: TelemetrySnapshot) -> int:
+        if self.config.vesc.bms_can_id in snapshot.can_nodes:
+            return self.config.vesc.bms_can_id
+        candidates = [node for node in snapshot.can_nodes if node != self.config.vesc.thor_can_id]
+        if len(candidates) == 1:
+            return candidates[0]
+        return self.config.vesc.bms_can_id
+
     def _validate_control_snapshot(self, action: str, snapshot: TelemetrySnapshot) -> None:
         if not snapshot.connected:
             raise VescProtocolError("telemetry unavailable")
@@ -136,20 +144,22 @@ class OnewheelBridge:
         snapshot = self._snapshot_for_control()
         self._validate_control_snapshot(command.action, snapshot)
 
+        bms_can_id = self._effective_bms_can_id(snapshot)
+
         if command.action == "allow_charging":
-            self.client.set_bms_charge_allowed(True)
-            message = "charging allowed"
+            self.client.set_bms_charge_allowed(True, can_id=bms_can_id)
+            message = f"charging allowed via BMS CAN {bms_can_id}"
         elif command.action == "disable_charging":
-            self.client.set_bms_charge_allowed(False)
-            message = "charging disabled"
+            self.client.set_bms_charge_allowed(False, can_id=bms_can_id)
+            message = f"charging disabled via BMS CAN {bms_can_id}"
         elif command.action in {"allow_balancing", "disable_balancing"}:
             if not snapshot.bms or not snapshot.bms.cells_v:
                 raise VescProtocolError("cell list unavailable; cannot target balance overrides")
             override = 0 if command.action == "allow_balancing" else 1
             for cell_index in range(len(snapshot.bms.cells_v)):
-                self.client.set_bms_balance_override(cell_index, override)
+                self.client.set_bms_balance_override(cell_index, override, can_id=bms_can_id)
                 time.sleep(0.02)
-            message = f"balancing {'allowed' if override == 0 else 'disabled'} for {len(snapshot.bms.cells_v)} cells"
+            message = f"balancing {'allowed' if override == 0 else 'disabled'} for {len(snapshot.bms.cells_v)} cells via BMS CAN {bms_can_id}"
         else:  # pragma: no cover - protected by enqueue validation
             raise VescProtocolError(f"unknown action {command.action}")
 
@@ -176,7 +186,10 @@ class OnewheelBridge:
     def run(self) -> None:
         self.publisher.connect()
         self.publisher.publish_availability(False)
-        self.refresh_static_info(force=True)
+        try:
+            self.refresh_static_info(force=True)
+        except Exception as exc:  # noqa: BLE001 - keep service alive when board is offline
+            LOG.warning("initial static telemetry refresh failed; bridge will retry in loop: %s", exc)
         self.publisher.publish_discovery(
             TelemetrySnapshot(
                 firmware=self._cached_firmware,

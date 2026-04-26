@@ -25,8 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     bridge = OnewheelBridge(config)
     try:
-        bridge.refresh_static_info(force=True)
         if args.once:
+            bridge.refresh_static_info(force=True)
             snapshot = bridge.poll_once()
             snapshot.firmware = bridge._cached_firmware
             snapshot.can_nodes = list(bridge._cached_can_nodes)

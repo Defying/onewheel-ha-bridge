@@ -242,6 +242,11 @@ class VescTcpClient:
             payload = bytes(payload)
         return self.query(bytes([COMM_FORWARD_CAN, can_id]) + payload)
 
+    def send_forward_can(self, can_id: int, payload: Iterable[int] | bytes) -> None:
+        if not isinstance(payload, bytes):
+            payload = bytes(payload)
+        self.send(bytes([COMM_FORWARD_CAN, can_id]) + payload)
+
     def _retry_decode(self, label: str, fetch_payload, decode_payload, attempts: int = 3):  # noqa: ANN001, ANN202
         """Retry a read when the bridge returns a transient/stale packet.
 
@@ -370,15 +375,23 @@ class VescTcpClient:
             self.get_bms_values_from_payload,
         )
 
-    def set_bms_charge_allowed(self, allowed: bool) -> None:
-        self.send(bytes([COMM_BMS_SET_CHARGE_ALLOWED, 1 if allowed else 0]))
+    def set_bms_charge_allowed(self, allowed: bool, can_id: int | None = None) -> None:
+        payload = bytes([COMM_BMS_SET_CHARGE_ALLOWED, 1 if allowed else 0])
+        if can_id is None:
+            self.send(payload)
+        else:
+            self.send_forward_can(can_id, payload)
 
-    def set_bms_balance_override(self, cell_index_0_based: int, override: int) -> None:
+    def set_bms_balance_override(self, cell_index_0_based: int, override: int, can_id: int | None = None) -> None:
         if cell_index_0_based < 0:
             raise ValueError("cell index must be >= 0")
         if override not in {0, 1, 2}:
             raise ValueError("balance override must be 0, 1, or 2")
-        self.send(bytes([COMM_BMS_SET_BALANCE_OVERRIDE, cell_index_0_based, override]))
+        payload = bytes([COMM_BMS_SET_BALANCE_OVERRIDE, cell_index_0_based, override])
+        if can_id is None:
+            self.send(payload)
+        else:
+            self.send_forward_can(can_id, payload)
 
     def get_bms_values_from_payload(self, payload: bytes) -> BmsValues:
         buffer = Buffer(payload)
