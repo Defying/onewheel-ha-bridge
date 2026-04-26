@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 import json
 import logging
 import threading
@@ -80,7 +81,13 @@ class HomeAssistantPublisher:
         self._client.publish(availability_topic(self.config.home_assistant), payload, retain=True, qos=1)
 
     def publish_command_status(self, action: str, status: str, message: str) -> None:
-        payload = {"action": action, "status": status, "message": message}
+        payload = {
+            "action": action,
+            "status": status,
+            "message": message,
+            "controls_enabled": self.config.controls.enabled,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
         self._client.publish(
             command_status_topic(self.config.home_assistant, self.config.controls),
             json.dumps(payload, separators=(",", ":")),

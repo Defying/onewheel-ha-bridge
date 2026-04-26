@@ -15,9 +15,12 @@ LOG = logging.getLogger(__name__)
 
 ALLOWED_CONTROL_ACTIONS = {
     "allow_charging",
-    "disable_charging",
     "allow_balancing",
-    "disable_balancing",
+}
+
+UNSUPPORTED_CONTROL_ACTIONS = {
+    "disable_charging": "disable charging is not supported by the verified ENNOID command path",
+    "disable_balancing": "disable balancing is not supported by the verified ENNOID command path",
 }
 
 
@@ -43,6 +46,12 @@ class OnewheelBridge:
         self._last_command_at = 0.0
 
     def enqueue_control_command(self, action: str) -> None:
+        LOG.warning("guarded control request received: action=%s enabled=%s", action, self.config.controls.enabled)
+        if action in UNSUPPORTED_CONTROL_ACTIONS:
+            message = UNSUPPORTED_CONTROL_ACTIONS[action]
+            LOG.warning("rejecting unsupported control action %s: %s", action, message)
+            self.publisher.publish_command_status(action, "rejected", message)
+            return
         if action not in ALLOWED_CONTROL_ACTIONS:
             LOG.warning("ignoring unknown control action %r", action)
             self.publisher.publish_command_status(action, "rejected", "unknown action")
@@ -149,13 +158,9 @@ class OnewheelBridge:
         if command.action == "allow_charging":
             self.client.set_bms_charge_allowed(True, can_id=bms_can_id)
             message = f"charging allowed via BMS CAN {bms_can_id}"
-        elif command.action == "disable_charging":
-            raise VescProtocolError("disable charging is not supported by the verified ENNOID command path")
         elif command.action == "allow_balancing":
             self.client.force_bms_balance(True, can_id=bms_can_id)
             message = f"force balancing enabled via BMS CAN {bms_can_id}"
-        elif command.action == "disable_balancing":
-            raise VescProtocolError("disable balancing is not supported by the verified ENNOID command path")
         else:  # pragma: no cover - protected by enqueue validation
             raise VescProtocolError(f"unknown action {command.action}")
 
