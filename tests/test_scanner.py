@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from onewheel_ha_bridge.config import VescConfig, VescDiscoveryConfig
 from onewheel_ha_bridge.models import FirmwareInfo
-from onewheel_ha_bridge.scanner import VescTcpEndpoint, board_id_for_endpoint, discover_vesc_tcp_endpoints, iter_discovery_hosts, probe_vesc_tcp
+from onewheel_ha_bridge.scanner import HARD_MAX_PORTS_PER_SCAN, HARD_MAX_PROBES_PER_SCAN, HARD_MAX_WORKERS, VescTcpEndpoint, board_id_for_endpoint, discover_vesc_tcp_endpoints, iter_discovery_hosts, probe_vesc_tcp
 
 
 def firmware(uuid: str = "1234567890abcdef12345678") -> FirmwareInfo:
@@ -99,13 +99,72 @@ class ScannerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             iter_discovery_hosts(VescDiscoveryConfig(enabled=True, networks=("192.0.0.0/16",)))
 
+    def test_rejects_public_network_by_default(self) -> None:
+        with self.assertRaises(ValueError):
+            iter_discovery_hosts(VescDiscoveryConfig(enabled=True, networks=("8.8.8.0/24",)))
+        hosts = iter_discovery_hosts(VescDiscoveryConfig(enabled=True, networks=("8.8.8.0/30",), allow_public_networks=True), configured_host=None)
+        self.assertEqual(hosts, ["8.8.8.1", "8.8.8.2"])
+
+    def test_hard_caps_total_probes_ports_and_workers(self) -> None:
+        seen: list[tuple[str, int]] = []
+        hosts = tuple(f"192.0.2.{index}" for index in range(1, 40))
+        ports = tuple(range(65000, 65000 + HARD_MAX_PORTS_PER_SCAN + 10))
+
+        class RecordingExecutor:
+            max_workers_seen: int | None = None
+
+            def __init__(self, max_workers: int):
+                RecordingExecutor.max_workers_seen = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def submit(self, func, host, port):
+                class Future:
+                    def result(self_inner):
+                        return func(host, port)
+
+                return Future()
+
+        def probe(host: str, port: int) -> None:
+            seen.append((host, port))
+            return None
+
+        with patch("onewheel_ha_bridge.scanner.as_completed", side_effect=lambda futures: list(futures)):
+            with patch("onewheel_ha_bridge.scanner.ThreadPoolExecutor", RecordingExecutor):
+                discover_vesc_tcp_endpoints(
+                    VescDiscoveryConfig(
+                        enabled=True,
+                        hosts=hosts,
+                        ports=ports,
+                        max_workers=999,
+                        max_probes_per_scan=999999,
+                    ),
+                    VescConfig(host="192.0.2.250"),
+                    probe=probe,
+                )
+
+        self.assertLessEqual(len(seen), HARD_MAX_PROBES_PER_SCAN)
+        self.assertTrue(all(port < 65000 + HARD_MAX_PORTS_PER_SCAN for _, port in seen))
+        self.assertEqual(RecordingExecutor.max_workers_seen, HARD_MAX_WORKERS)
+
     def test_board_id_prefers_firmware_uuid(self) -> None:
         endpoint = VescTcpEndpoint("192.0.2.20", 65102, firmware("abcdef0123456789abcdef01"))
-        self.assertEqual(board_id_for_endpoint(endpoint), "vesc_abcdef012345")
+        self.assertEqual(board_id_for_endpoint(endpoint), "vesc_abcdef0123456789abcdef01")
 
-    def test_board_id_falls_back_to_host_port(self) -> None:
-        endpoint = VescTcpEndpoint("192.0.2.20", 65102, firmware("0" * 24))
-        self.assertEqual(board_id_for_endpoint(endpoint), "vesc_192_0_2_20_65102")
+    def test_board_id_uses_full_uuid_to_avoid_truncation_collisions(self) -> None:
+        first = VescTcpEndpoint("192.0.2.20", 65102, firmware("abcdef012345000000000001"))
+        second = VescTcpEndpoint("192.0.2.21", 65102, firmware("abcdef012345000000000002"))
+        self.assertNotEqual(board_id_for_endpoint(first), board_id_for_endpoint(second))
+
+    def test_board_id_falls_back_to_host_port_with_hash_suffix(self) -> None:
+        first = VescTcpEndpoint("a.b", 65102, firmware("0" * 24))
+        second = VescTcpEndpoint("a-b", 65102, firmware("0" * 24))
+        self.assertNotEqual(board_id_for_endpoint(first), board_id_for_endpoint(second))
+        self.assertRegex(board_id_for_endpoint(first), r"^vesc_a_b_65102_[0-9a-f]{8}$")
 
 
 if __name__ == "__main__":

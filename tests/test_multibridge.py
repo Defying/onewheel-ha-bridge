@@ -46,9 +46,9 @@ class MultiBridgeTests(unittest.TestCase):
         self.assertIn("192.0.2.1:65102", bridge._boards)
         self.assertEqual(len(bridge._boards), 2)
         discovered = bridge._boards["192.0.2.2:65102"].bridge.config
-        self.assertEqual(discovered.home_assistant.device_id, "custom_onewheel_vesc_abcdef012345")
-        self.assertEqual(discovered.home_assistant.base_topic, "onewheel/custom_xr/vesc_abcdef012345")
-        self.assertEqual(discovered.mqtt.client_id, "onewheel-ha-bridge-vesc_abcdef012345")
+        self.assertEqual(discovered.home_assistant.device_id, "custom_onewheel_vesc_abcdef0123456789abcdef01")
+        self.assertEqual(discovered.home_assistant.base_topic, "onewheel/custom_xr/vesc_abcdef0123456789abcdef01")
+        self.assertEqual(discovered.mqtt.client_id, "onewheel-ha-bridge-vesc_abcdef0123456789abcdef01")
         self.assertFalse(discovered.controls.enabled)
         self.assertFalse(discovered.controls.refloat_led_controls_enabled)
         self.assertIsNone(discovered.controls.command_topic)
@@ -74,7 +74,7 @@ class MultiBridgeTests(unittest.TestCase):
         self.assertEqual(state_topic(child.home_assistant), "onewheel/custom_xr/vesc_child/state")
         self.assertEqual(availability_topic(child.home_assistant), "onewheel/custom_xr/vesc_child/availability")
 
-    def test_discovered_controls_require_explicit_discovery_opt_in(self) -> None:
+    def test_discovered_controls_are_always_disabled(self) -> None:
         base = BridgeConfig(
             vesc=VescConfig(host="192.0.2.1"),
             mqtt=MqttConfig(),
@@ -85,10 +85,10 @@ class MultiBridgeTests(unittest.TestCase):
                 command_topic="onewheel/shared/command",
                 status_topic="onewheel/shared/status",
             ),
-            discovery=VescDiscoveryConfig(enabled=True, controls_enabled_for_discovered=True),
+            discovery=VescDiscoveryConfig(enabled=True),
         )
         child = base.for_discovered_board("vesc_child", "192.0.2.55", 65102)
-        self.assertTrue(child.controls.enabled)
+        self.assertFalse(child.controls.enabled)
         self.assertFalse(child.controls.refloat_led_controls_enabled)
         self.assertIsNone(child.controls.command_topic)
         self.assertIsNone(child.controls.status_topic)

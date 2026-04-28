@@ -20,7 +20,7 @@ enabled = true
 hosts = ["192.0.2.10"]
 networks = ["192.0.2.0/30"]
 ports = [65102, 65103]
-controls_enabled_for_discovered = false
+allow_public_networks = false
 """.strip()
             )
             config = load_config(path)
@@ -29,7 +29,7 @@ controls_enabled_for_discovered = false
         self.assertEqual(config.discovery.hosts, ("192.0.2.10",))
         self.assertEqual(config.discovery.networks, ("192.0.2.0/30",))
         self.assertEqual(config.discovery.ports, (65102, 65103))
-        self.assertFalse(config.discovery.controls_enabled_for_discovered)
+        self.assertFalse(config.discovery.allow_public_networks)
 
     def test_env_discovery_lists_are_csv(self) -> None:
         env = {

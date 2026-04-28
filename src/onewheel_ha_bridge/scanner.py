@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import hashlib
 import ipaddress
 import logging
 import re
@@ -12,6 +13,11 @@ from .models import FirmwareInfo
 from .protocol import COMM_FW_VERSION, VescTcpClient
 
 LOG = logging.getLogger(__name__)
+
+HARD_MAX_HOSTS_PER_SCAN = 1024
+HARD_MAX_PORTS_PER_SCAN = 16
+HARD_MAX_PROBES_PER_SCAN = 2048
+HARD_MAX_WORKERS = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,14 +43,18 @@ def slugify(value: str, fallback: str = "vesc") -> str:
     return slug or fallback
 
 
+def _short_hash(value: str) -> str:
+    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:8]
+
+
 def board_id_for_endpoint(endpoint: VescTcpEndpoint) -> str:
     uuid = (endpoint.firmware.uuid or "").lower()
     if uuid and uuid != "0" * len(uuid):
-        return f"vesc_{uuid[:12]}"
-    return slugify(f"vesc_{endpoint.host}_{endpoint.port}")
+        return f"vesc_{uuid}"
+    return f"{slugify(f'vesc_{endpoint.host}_{endpoint.port}')}_{_short_hash(endpoint.key)}"
 
 
-def _hosts_from_network(cidr: str, max_hosts: int, min_ipv4_prefix_length: int) -> list[str]:
+def _hosts_from_network(cidr: str, max_hosts: int, min_ipv4_prefix_length: int, allow_public_networks: bool) -> list[str]:
     try:
         network = ipaddress.ip_network(cidr, strict=False)
     except ValueError as exc:
@@ -56,6 +66,8 @@ def _hosts_from_network(cidr: str, max_hosts: int, min_ipv4_prefix_length: int) 
             f"discovery network {cidr!r} is broader than allowed /{min_ipv4_prefix_length}; "
             "use explicit hosts or lower min_ipv4_prefix_length deliberately"
         )
+    if not allow_public_networks and not network.is_private:
+        raise ValueError(f"discovery network {cidr!r} is public; set allow_public_networks only if you really mean it")
     hosts: list[str] = []
     for address in network.hosts():
         hosts.append(str(address))
@@ -68,8 +80,10 @@ def iter_discovery_hosts(config: VescDiscoveryConfig, configured_host: str | Non
     hosts: list[str] = []
     seen: set[str] = set()
 
+    max_hosts = max(0, min(config.max_hosts_per_scan, HARD_MAX_HOSTS_PER_SCAN))
+
     def add(host: str) -> None:
-        if len(hosts) >= config.max_hosts_per_scan:
+        if len(hosts) >= max_hosts:
             return
         if host in seen:
             return
@@ -81,11 +95,11 @@ def iter_discovery_hosts(config: VescDiscoveryConfig, configured_host: str | Non
     for host in config.hosts:
         add(host)
     for network in config.networks:
-        if len(hosts) >= config.max_hosts_per_scan:
+        if len(hosts) >= max_hosts:
             break
-        for host in _hosts_from_network(network, config.max_hosts_per_scan, config.min_ipv4_prefix_length):
+        for host in _hosts_from_network(network, max_hosts, config.min_ipv4_prefix_length, config.allow_public_networks):
             add(host)
-            if len(hosts) >= config.max_hosts_per_scan:
+            if len(hosts) >= max_hosts:
                 break
     return hosts
 
@@ -129,12 +143,16 @@ def discover_vesc_tcp_endpoints(
     hosts = iter_discovery_hosts(discovery_config, configured_host=base_config.host)
     if not hosts:
         return []
-    ports = tuple(discovery_config.ports) or (base_config.port,)
+    ports = tuple(port for port in discovery_config.ports if 0 < port <= 65535) or (base_config.port,)
+    ports = ports[:HARD_MAX_PORTS_PER_SCAN]
     probe_func = probe or (lambda host, port: probe_vesc_tcp(host, port, base_config, discovery_config.probe_timeout_seconds))
-    tasks = [(host, port) for host in hosts for port in ports][: max(discovery_config.max_probes_per_scan, 0)]
+    max_probes = max(0, min(discovery_config.max_probes_per_scan, HARD_MAX_PROBES_PER_SCAN))
+    tasks = [(host, port) for host in hosts for port in ports][:max_probes]
+    if not tasks:
+        return []
     endpoints: list[VescTcpEndpoint] = []
     seen: set[str] = set()
-    max_workers = max(1, min(discovery_config.max_workers, len(tasks)))
+    max_workers = max(1, min(discovery_config.max_workers, HARD_MAX_WORKERS, len(tasks)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {executor.submit(probe_func, host, port): (host, port) for host, port in tasks}
         for future in as_completed(future_map):

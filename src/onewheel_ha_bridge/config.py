@@ -66,7 +66,7 @@ class VescDiscoveryConfig:
     max_probes_per_scan: int = 512
     min_ipv4_prefix_length: int = 24
     include_configured_host: bool = True
-    controls_enabled_for_discovered: bool = False
+    allow_public_networks: bool = False
 
     def __post_init__(self) -> None:
         self.hosts = tuple(self.hosts)
@@ -112,7 +112,7 @@ class BridgeConfig:
             ),
             controls=replace(
                 self.controls,
-                enabled=self.discovery.controls_enabled_for_discovered,
+                enabled=False,
                 refloat_led_controls_enabled=False,
                 command_topic=None,
                 status_topic=None,
@@ -161,7 +161,7 @@ _ENV_MAP: dict[tuple[str, str], tuple[str, object]] = {
     ("discovery", "max_probes_per_scan"): ("OWHB_DISCOVERY_MAX_PROBES", int),
     ("discovery", "min_ipv4_prefix_length"): ("OWHB_DISCOVERY_MIN_IPV4_PREFIX", int),
     ("discovery", "include_configured_host"): ("OWHB_DISCOVERY_INCLUDE_CONFIGURED_HOST", _bool),
-    ("discovery", "controls_enabled_for_discovered"): ("OWHB_DISCOVERY_CONTROLS_ENABLED", _bool),
+    ("discovery", "allow_public_networks"): ("OWHB_DISCOVERY_ALLOW_PUBLIC_NETWORKS", _bool),
 }
 
 

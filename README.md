@@ -103,13 +103,13 @@ probe_timeout_seconds = 0.35
 max_hosts_per_scan = 256
 max_probes_per_scan = 512
 min_ipv4_prefix_length = 24
-controls_enabled_for_discovered = false
+allow_public_networks = false
 ```
 
 Safety/backward-compat behavior:
 - the configured `[vesc]` host keeps the existing `device_id`, topics, and controls behavior.
 - auto-discovered boards get suffixed topics like `<base_topic>/vesc_<uuid>` and unique MQTT client IDs.
-- controls are disabled for discovered boards unless `controls_enabled_for_discovered = true` is explicitly set.
+- auto-discovered boards are telemetry-only; controls are intentionally not enabled from discovery.
 - discovered boards always use their own derived command/status topics; custom primary command topics and Refloat LED controls are not copied onto discovered boards.
 - discovery never sends motor/config/write commands; probes are firmware-version reads only.
 
@@ -211,7 +211,7 @@ You can override common settings without editing the file:
 - `OWHB_DISCOVERY_MAX_HOSTS`
 - `OWHB_DISCOVERY_MAX_PROBES`
 - `OWHB_DISCOVERY_MIN_IPV4_PREFIX`
-- `OWHB_DISCOVERY_CONTROLS_ENABLED`
+- `OWHB_DISCOVERY_ALLOW_PUBLIC_NETWORKS`
 
 ## Home Assistant notes
 

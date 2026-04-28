@@ -123,24 +123,20 @@ class OnewheelBridge:
         return snapshot
 
     def _snapshot_for_control(self) -> TelemetrySnapshot:
-        # Use fresh-ish telemetry if available; otherwise poll before any write.
-        if self._last_snapshot and time.time() - self._last_snapshot.collected_at.timestamp() <= 10:
-            return self._last_snapshot
-        snapshot = self.poll_once()
-        snapshot.firmware = self._cached_firmware
-        snapshot.can_nodes = list(self._cached_can_nodes)
-        snapshot.refloat_info = self._cached_refloat_info
-        snapshot.refloat_ids = self._cached_refloat_ids
+        # Never execute a write against cached telemetry. Re-check static info
+        # and live telemetry immediately before control validation.
+        self.refresh_static_info(force=True)
+        snapshot = self._attach_static_info(self.poll_once())
         self._last_snapshot = snapshot
         return snapshot
 
     def _effective_bms_can_id(self, snapshot: TelemetrySnapshot) -> int:
-        if self.config.vesc.bms_can_id in snapshot.can_nodes:
-            return self.config.vesc.bms_can_id
-        candidates = [node for node in snapshot.can_nodes if node != self.config.vesc.thor_can_id]
-        if len(candidates) == 1:
-            return candidates[0]
-        return self.config.vesc.bms_can_id
+        configured = self.config.vesc.bms_can_id
+        if configured not in snapshot.can_nodes:
+            raise VescProtocolError(f"configured BMS CAN {configured} not present in CAN node list")
+        if snapshot.bms and snapshot.bms.can_id != configured:
+            raise VescProtocolError(f"BMS telemetry CAN {snapshot.bms.can_id} does not match configured BMS CAN {configured}")
+        return configured
 
     def _validate_control_snapshot(self, action: str, snapshot: TelemetrySnapshot) -> None:
         if not snapshot.connected:
