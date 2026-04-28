@@ -85,6 +85,8 @@ class HomeAssistantPublisher:
             "action": action,
             "status": status,
             "message": message,
+            "device_id": self.config.home_assistant.device_id,
+            "base_topic": self.config.home_assistant.base_topic,
             "controls_enabled": self.config.controls.enabled,
             "timestamp": datetime.now(UTC).isoformat(),
         }
