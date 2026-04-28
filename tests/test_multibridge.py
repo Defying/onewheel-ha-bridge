@@ -50,6 +50,9 @@ class MultiBridgeTests(unittest.TestCase):
         self.assertEqual(discovered.home_assistant.base_topic, "onewheel/custom_xr/vesc_abcdef012345")
         self.assertEqual(discovered.mqtt.client_id, "onewheel-ha-bridge-vesc_abcdef012345")
         self.assertFalse(discovered.controls.enabled)
+        self.assertFalse(discovered.controls.refloat_led_controls_enabled)
+        self.assertIsNone(discovered.controls.command_topic)
+        self.assertIsNone(discovered.controls.status_topic)
         self.assertFalse(discovered.discovery.enabled)
 
     def test_discovered_board_discovery_payloads_are_unique(self) -> None:
@@ -76,11 +79,19 @@ class MultiBridgeTests(unittest.TestCase):
             vesc=VescConfig(host="192.0.2.1"),
             mqtt=MqttConfig(),
             home_assistant=HomeAssistantConfig(),
-            controls=ControlsConfig(enabled=True),
+            controls=ControlsConfig(
+                enabled=True,
+                refloat_led_controls_enabled=True,
+                command_topic="onewheel/shared/command",
+                status_topic="onewheel/shared/status",
+            ),
             discovery=VescDiscoveryConfig(enabled=True, controls_enabled_for_discovered=True),
         )
         child = base.for_discovered_board("vesc_child", "192.0.2.55", 65102)
         self.assertTrue(child.controls.enabled)
+        self.assertFalse(child.controls.refloat_led_controls_enabled)
+        self.assertIsNone(child.controls.command_topic)
+        self.assertIsNone(child.controls.status_topic)
         self.assertEqual(child.vesc.host, "192.0.2.55")
 
 

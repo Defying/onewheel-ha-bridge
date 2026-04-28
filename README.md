@@ -110,6 +110,7 @@ Safety/backward-compat behavior:
 - the configured `[vesc]` host keeps the existing `device_id`, topics, and controls behavior.
 - auto-discovered boards get suffixed topics like `<base_topic>/vesc_<uuid>` and unique MQTT client IDs.
 - controls are disabled for discovered boards unless `controls_enabled_for_discovered = true` is explicitly set.
+- discovered boards always use their own derived command/status topics; custom primary command topics and Refloat LED controls are not copied onto discovered boards.
 - discovery never sends motor/config/write commands; probes are firmware-version reads only.
 
 To run one read-only scan and print discovered endpoints:

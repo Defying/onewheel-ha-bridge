@@ -45,6 +45,8 @@ max_probes_per_scan = 512
 min_ipv4_prefix_length = 24
 include_configured_host = true
 # Keep controls disabled for auto-discovered boards unless you explicitly opt in.
+# If enabled, discovered boards still use derived per-board command/status topics,
+# and Refloat LED controls remain off for discovered boards.
 controls_enabled_for_discovered = false
 
 [controls]

@@ -211,43 +211,54 @@ class OnewheelBridge:
         payload = snapshot.to_raw_dict() if raw else snapshot.to_state_dict()
         print(json.dumps(payload, indent=2, sort_keys=True))
 
-    def run(self) -> None:
+    def _static_snapshot(self) -> TelemetrySnapshot:
+        return TelemetrySnapshot(
+            firmware=self._cached_firmware,
+            can_nodes=self._cached_can_nodes,
+            refloat_info=self._cached_refloat_info,
+            refloat_ids=self._cached_refloat_ids,
+        )
+
+    def _attach_static_info(self, snapshot: TelemetrySnapshot) -> TelemetrySnapshot:
+        snapshot.firmware = self._cached_firmware
+        snapshot.can_nodes = list(self._cached_can_nodes)
+        snapshot.refloat_info = self._cached_refloat_info
+        snapshot.refloat_ids = self._cached_refloat_ids
+        return snapshot
+
+    def connect(self) -> None:
         self.publisher.connect()
         self.publisher.publish_availability(False)
         try:
             self.refresh_static_info(force=True)
         except Exception as exc:  # noqa: BLE001 - keep service alive when board is offline
             LOG.warning("initial static telemetry refresh failed; bridge will retry in loop: %s", exc)
-        self.publisher.publish_discovery(
-            TelemetrySnapshot(
-                firmware=self._cached_firmware,
-                can_nodes=self._cached_can_nodes,
-                refloat_info=self._cached_refloat_info,
-                refloat_ids=self._cached_refloat_ids,
-            )
-        )
+        self.publisher.publish_discovery(self._static_snapshot())
         self._discovery_published = True
 
+    def poll_cycle(self) -> TelemetrySnapshot | None:
+        self._poll_count += 1
+        try:
+            self.process_control_commands()
+            if self._poll_count % max(self.config.vesc.static_refresh_every_polls, 1) == 0:
+                self.refresh_static_info(force=True)
+            snapshot = self._attach_static_info(self.poll_once())
+            self._last_snapshot = snapshot
+            if not self._discovery_published or self._poll_count % max(self.config.vesc.static_refresh_every_polls, 1) == 0:
+                self.publisher.publish_discovery(snapshot)
+                self._discovery_published = True
+            self.publisher.publish_snapshot(snapshot)
+            self.publisher.publish_availability(True)
+            return snapshot
+        except Exception as exc:  # noqa: BLE001 - long-running service loop
+            LOG.exception("poll cycle failed: %s", exc)
+            self.publisher.publish_availability(False)
+            return None
+
+    def run(self) -> None:
+        self.connect()
         while True:
-            self._poll_count += 1
-            try:
-                self.process_control_commands()
-                if self._poll_count % max(self.config.vesc.static_refresh_every_polls, 1) == 0:
-                    self.refresh_static_info(force=True)
-                snapshot = self.poll_once()
-                snapshot.firmware = self._cached_firmware
-                snapshot.can_nodes = list(self._cached_can_nodes)
-                snapshot.refloat_info = self._cached_refloat_info
-                snapshot.refloat_ids = self._cached_refloat_ids
-                self._last_snapshot = snapshot
-                if not self._discovery_published or self._poll_count % max(self.config.vesc.static_refresh_every_polls, 1) == 0:
-                    self.publisher.publish_discovery(snapshot)
-                    self._discovery_published = True
-                self.publisher.publish_snapshot(snapshot)
-                self.publisher.publish_availability(True)
-            except Exception as exc:  # noqa: BLE001 - long-running service loop
-                LOG.exception("poll cycle failed: %s", exc)
-                self.publisher.publish_availability(False)
+            self.poll_cycle()
             time.sleep(self.config.vesc.poll_interval_seconds)
 
     def close(self) -> None:

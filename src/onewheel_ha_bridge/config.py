@@ -110,7 +110,13 @@ class BridgeConfig:
                 device_id=device_id,
                 device_name=name or f"{self.home_assistant.device_name} {board_id}",
             ),
-            controls=replace(self.controls, enabled=self.discovery.controls_enabled_for_discovered),
+            controls=replace(
+                self.controls,
+                enabled=self.discovery.controls_enabled_for_discovered,
+                refloat_led_controls_enabled=False,
+                command_topic=None,
+                status_topic=None,
+            ),
             discovery=replace(self.discovery, enabled=False),
         )
 

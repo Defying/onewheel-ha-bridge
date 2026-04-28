@@ -60,21 +60,7 @@ class MultiBoardBridge:
             bridge._cached_firmware = firmware
         runtime = BoardRuntime(key=key, bridge=bridge, discovered=discovered)
         self._boards[key] = runtime
-        bridge.publisher.connect()
-        bridge.publisher.publish_availability(False)
-        try:
-            bridge.refresh_static_info(force=True)
-        except Exception as exc:  # noqa: BLE001 - board can be asleep/offline
-            LOG.warning("initial static telemetry refresh failed for %s: %s", key, exc)
-        bridge.publisher.publish_discovery(
-            TelemetrySnapshot(
-                firmware=bridge._cached_firmware,
-                can_nodes=bridge._cached_can_nodes,
-                refloat_info=bridge._cached_refloat_info,
-                refloat_ids=bridge._cached_refloat_ids,
-            )
-        )
-        bridge._discovery_published = True
+        bridge.connect()
         LOG.info("registered %sboard %s at %s:%s", "discovered " if discovered else "", config.home_assistant.device_id, config.vesc.host, config.vesc.port)
         return runtime
 
@@ -110,28 +96,7 @@ class MultiBoardBridge:
                 LOG.exception("VESC TCP discovery scan failed: %s", exc)
 
     def poll_runtime_once(self, runtime: BoardRuntime) -> TelemetrySnapshot | None:
-        bridge = runtime.bridge
-        bridge._poll_count += 1
-        try:
-            bridge.process_control_commands()
-            if bridge._poll_count % max(bridge.config.vesc.static_refresh_every_polls, 1) == 0:
-                bridge.refresh_static_info(force=True)
-            snapshot = bridge.poll_once()
-            snapshot.firmware = bridge._cached_firmware
-            snapshot.can_nodes = list(bridge._cached_can_nodes)
-            snapshot.refloat_info = bridge._cached_refloat_info
-            snapshot.refloat_ids = bridge._cached_refloat_ids
-            bridge._last_snapshot = snapshot
-            if not bridge._discovery_published or bridge._poll_count % max(bridge.config.vesc.static_refresh_every_polls, 1) == 0:
-                bridge.publisher.publish_discovery(snapshot)
-                bridge._discovery_published = True
-            bridge.publisher.publish_snapshot(snapshot)
-            bridge.publisher.publish_availability(True)
-            return snapshot
-        except Exception as exc:  # noqa: BLE001 - long-running service loop
-            LOG.exception("poll cycle failed for %s: %s", runtime.key, exc)
-            bridge.publisher.publish_availability(False)
-            return None
+        return runtime.bridge.poll_cycle()
 
     def poll_once(self) -> dict[str, TelemetrySnapshot | None]:
         self._maybe_scan()
