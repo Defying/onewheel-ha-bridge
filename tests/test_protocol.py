@@ -18,9 +18,31 @@ REFLOAT_RT_HEX = "24651f0406027f084602000000800080000000000000000d3657d600004ecb
 REFLOAT_LIGHTS_HEX = "24651403"
 
 
+class FakeSocket:
+    def __init__(self, data: bytes):
+        self.data = bytearray(data)
+
+    def recv(self, size: int) -> bytes:
+        if not self.data:
+            return b""
+        chunk = bytes(self.data[:size])
+        del self.data[:size]
+        return chunk
+
+
 class ProtocolDecodeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = VescTcpClient(VescConfig())
+
+    def test_frame_reader_validates_crc(self) -> None:
+        payload = bytes([0, 6, 5])
+        frame = bytearray(self.client._encode_frame(payload))
+        decoded = self.client._read_frame(FakeSocket(bytes(frame)))
+        self.assertEqual(decoded, payload)
+
+        frame[-3] ^= 0xFF
+        with self.assertRaises(VescProtocolError):
+            self.client._read_frame(FakeSocket(bytes(frame)))
 
     def test_ping_can_shape(self) -> None:
         nodes = list(bytes.fromhex(PING_HEX)[1:])

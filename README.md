@@ -2,10 +2,11 @@
 
 VESC TCP endpoint to Home Assistant bridge via MQTT discovery. Telemetry is read-only by default; optional BMS / Refloat LED controls are guarded and opt-in.
 
-this project polls a custom Onewheel's VESC/Refloat/BMS telemetry and publishes:
+this project polls custom Onewheel / VESC TCP bridge telemetry and publishes:
 - retained Home Assistant MQTT discovery payloads
 - a flattened state topic for HA entities
 - a nested raw JSON topic for debugging
+- optional read-only LAN discovery for additional TCP-bridged VESC Express boards
 
 ## design
 
@@ -89,6 +90,34 @@ onewheel-ha-bridge --config config.toml
 
 Once it connects and publishes discovery, Home Assistant should auto-create the device.
 
+## optional multi-board discovery
+
+Discovery is off by default. When enabled, the bridge probes only the configured hosts/networks with `COMM_FW_VERSION` reads, then exposes each responding VESC TCP bridge as an additional Home Assistant MQTT device.
+
+```toml
+[discovery]
+enabled = true
+networks = ["192.168.1.0/24"]
+ports = [65102]
+probe_timeout_seconds = 0.35
+max_hosts_per_scan = 256
+max_probes_per_scan = 512
+min_ipv4_prefix_length = 24
+controls_enabled_for_discovered = false
+```
+
+Safety/backward-compat behavior:
+- the configured `[vesc]` host keeps the existing `device_id`, topics, and controls behavior.
+- auto-discovered boards get suffixed topics like `<base_topic>/vesc_<uuid>` and unique MQTT client IDs.
+- controls are disabled for discovered boards unless `controls_enabled_for_discovered = true` is explicitly set.
+- discovery never sends motor/config/write commands; probes are firmware-version reads only.
+
+To run one read-only scan and print discovered endpoints:
+
+```bash
+onewheel-ha-bridge --config config.toml --discover-once
+```
+
 ## optional launchd service (macOS)
 
 A sample plist lives at:
@@ -171,6 +200,17 @@ You can override common settings without editing the file:
 - `OWHB_CONTROLS_REQUIRE_SAFE_STATE`
 - `OWHB_CONTROLS_MAX_SPEED_MPH`
 - `OWHB_CONTROLS_COOLDOWN`
+- `OWHB_DISCOVERY_ENABLED`
+- `OWHB_DISCOVERY_HOSTS` (comma-separated)
+- `OWHB_DISCOVERY_NETWORKS` (comma-separated CIDRs)
+- `OWHB_DISCOVERY_PORTS` (comma-separated)
+- `OWHB_DISCOVERY_INTERVAL`
+- `OWHB_DISCOVERY_TIMEOUT`
+- `OWHB_DISCOVERY_MAX_WORKERS`
+- `OWHB_DISCOVERY_MAX_HOSTS`
+- `OWHB_DISCOVERY_MAX_PROBES`
+- `OWHB_DISCOVERY_MIN_IPV4_PREFIX`
+- `OWHB_DISCOVERY_CONTROLS_ENABLED`
 
 ## Home Assistant notes
 
@@ -199,6 +239,7 @@ python -m unittest discover -s tests -v
 
 ## caveats
 
+- Auto-discovery is intentionally bounded by configured hosts/networks, worker count, timeout, max host count, max probe count, and IPv4 prefix guard. Do not point it at networks you do not own/control.
 - Refloat runtime-only values are only populated while the package is actually `RUNNING`.
 - Refloat LED state queries and buttons are enabled only when controls are enabled, `refloat_led_controls_enabled = true`, and Refloat package info reports a supported stable lights protocol.
 - If the TCP bridge is flaky and resets connections, the client retries each query before marking the poll failed.

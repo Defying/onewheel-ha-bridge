@@ -219,7 +219,10 @@ class VescTcpClient:
         else:
             raise VescProtocolError(f"unexpected frame type {frame_type}")
         payload = self._recv_exact(sock, length)
-        self._recv_exact(sock, 2)  # CRC, already validated on sender side.
+        received_crc = self._recv_exact(sock, 2)
+        expected_crc = binascii.crc_hqx(payload, 0).to_bytes(2, "big")
+        if received_crc != expected_crc:
+            raise VescProtocolError(f"frame CRC mismatch: expected {expected_crc.hex()}, got {received_crc.hex()}")
         end = self._recv_exact(sock, 1)[0]
         if end != 3:
             raise VescProtocolError(f"unexpected frame end {end}")

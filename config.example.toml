@@ -27,6 +27,26 @@ model = "Thor400v2 + ENNOID XLITE 32 V4"
 controller_name = "Thor400v2"
 bms_name = "ENNOID-XLITE-32-V4"
 
+[discovery]
+# Read-only network discovery is disabled by default. When enabled, probes send
+# only COMM_FW_VERSION to configured hosts/networks and auto-add discovered
+# boards as additional HA MQTT devices. The configured [vesc] host keeps its
+# existing topics/device ID for backward compatibility.
+enabled = false
+# hosts = ["192.168.1.50", "192.168.1.51"]
+# networks = ["192.168.1.0/24"]
+ports = [65102]
+scan_interval_seconds = 60.0
+probe_timeout_seconds = 0.35
+max_workers = 32
+max_hosts_per_scan = 256
+max_probes_per_scan = 512
+# Default refuses broader-than-/24 CIDRs unless you deliberately lower this.
+min_ipv4_prefix_length = 24
+include_configured_host = true
+# Keep controls disabled for auto-discovered boards unless you explicitly opt in.
+controls_enabled_for_discovered = false
+
 [controls]
 # Guarded write controls are disabled by default. Enable only if you accept
 # Home Assistant buttons for allow charging / force balancing.

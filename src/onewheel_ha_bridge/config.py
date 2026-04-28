@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 import os
 from pathlib import Path
 import tomllib
@@ -8,6 +8,14 @@ import tomllib
 
 def _bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _csv(value: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def _ports(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in _csv(value))
 
 
 @dataclass(slots=True)
@@ -44,6 +52,29 @@ class HomeAssistantConfig:
 
 
 @dataclass(slots=True)
+class VescDiscoveryConfig:
+    # Network discovery is opt-in and read-only. Probes send only
+    # COMM_FW_VERSION to explicitly configured hosts/networks.
+    enabled: bool = False
+    hosts: tuple[str, ...] = ()
+    networks: tuple[str, ...] = ()
+    ports: tuple[int, ...] = (65102,)
+    scan_interval_seconds: float = 60.0
+    probe_timeout_seconds: float = 0.35
+    max_workers: int = 32
+    max_hosts_per_scan: int = 256
+    max_probes_per_scan: int = 512
+    min_ipv4_prefix_length: int = 24
+    include_configured_host: bool = True
+    controls_enabled_for_discovered: bool = False
+
+    def __post_init__(self) -> None:
+        self.hosts = tuple(self.hosts)
+        self.networks = tuple(self.networks)
+        self.ports = tuple(int(port) for port in self.ports)
+
+
+@dataclass(slots=True)
 class ControlsConfig:
     # Write controls are disabled unless explicitly enabled. When enabled,
     # Home Assistant MQTT button entities can request only the guarded actions
@@ -65,6 +96,23 @@ class BridgeConfig:
     mqtt: MqttConfig
     home_assistant: HomeAssistantConfig
     controls: ControlsConfig
+    discovery: VescDiscoveryConfig = field(default_factory=VescDiscoveryConfig)
+
+    def for_discovered_board(self, board_id: str, host: str, port: int, name: str | None = None) -> "BridgeConfig":
+        base_topic = self.home_assistant.base_topic.rstrip("/")
+        device_id = f"{self.home_assistant.device_id}_{board_id}"
+        return BridgeConfig(
+            vesc=replace(self.vesc, host=host, port=port),
+            mqtt=replace(self.mqtt, client_id=f"{self.mqtt.client_id}-{board_id}"),
+            home_assistant=replace(
+                self.home_assistant,
+                base_topic=f"{base_topic}/{board_id}",
+                device_id=device_id,
+                device_name=name or f"{self.home_assistant.device_name} {board_id}",
+            ),
+            controls=replace(self.controls, enabled=self.discovery.controls_enabled_for_discovered),
+            discovery=replace(self.discovery, enabled=False),
+        )
 
 
 _ENV_MAP: dict[tuple[str, str], tuple[str, object]] = {
@@ -96,6 +144,18 @@ _ENV_MAP: dict[tuple[str, str], tuple[str, object]] = {
     ("controls", "require_safe_state"): ("OWHB_CONTROLS_REQUIRE_SAFE_STATE", _bool),
     ("controls", "max_control_speed_mph"): ("OWHB_CONTROLS_MAX_SPEED_MPH", float),
     ("controls", "command_cooldown_seconds"): ("OWHB_CONTROLS_COOLDOWN", float),
+    ("discovery", "enabled"): ("OWHB_DISCOVERY_ENABLED", _bool),
+    ("discovery", "hosts"): ("OWHB_DISCOVERY_HOSTS", _csv),
+    ("discovery", "networks"): ("OWHB_DISCOVERY_NETWORKS", _csv),
+    ("discovery", "ports"): ("OWHB_DISCOVERY_PORTS", _ports),
+    ("discovery", "scan_interval_seconds"): ("OWHB_DISCOVERY_INTERVAL", float),
+    ("discovery", "probe_timeout_seconds"): ("OWHB_DISCOVERY_TIMEOUT", float),
+    ("discovery", "max_workers"): ("OWHB_DISCOVERY_MAX_WORKERS", int),
+    ("discovery", "max_hosts_per_scan"): ("OWHB_DISCOVERY_MAX_HOSTS", int),
+    ("discovery", "max_probes_per_scan"): ("OWHB_DISCOVERY_MAX_PROBES", int),
+    ("discovery", "min_ipv4_prefix_length"): ("OWHB_DISCOVERY_MIN_IPV4_PREFIX", int),
+    ("discovery", "include_configured_host"): ("OWHB_DISCOVERY_INCLUDE_CONFIGURED_HOST", _bool),
+    ("discovery", "controls_enabled_for_discovered"): ("OWHB_DISCOVERY_CONTROLS_ENABLED", _bool),
 }
 
 
@@ -139,4 +199,5 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
     mqtt = MqttConfig(**data.get("mqtt", {}))
     home_assistant = HomeAssistantConfig(**data.get("home_assistant", {}))
     controls = ControlsConfig(**data.get("controls", {}))
-    return BridgeConfig(vesc=vesc, mqtt=mqtt, home_assistant=home_assistant, controls=controls)
+    discovery = VescDiscoveryConfig(**data.get("discovery", {}))
+    return BridgeConfig(vesc=vesc, mqtt=mqtt, home_assistant=home_assistant, controls=controls, discovery=discovery)
