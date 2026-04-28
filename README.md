@@ -176,7 +176,7 @@ Home Assistant buttons publish one of these payloads to `onewheel/custom_xr/comm
 - `disable_charging` — rejected; ENNOID's verified command path does not safely disable charging
 - `disable_balancing` — rejected; ENNOID's verified command path does not safely disable balancing
 
-The command handler runs on the bridge loop, not directly in the MQTT callback, so writes do not overlap normal telemetry polling. A retained `Command Status` sensor reports queued/ok/rejected outcomes.
+The command handler runs on the bridge loop, not directly in the MQTT callback, so writes do not overlap normal telemetry polling. MQTT command payloads must be non-retained; the bridge ignores retained command messages on subscribe/reconnect so a stale broker payload cannot replay a guarded write. A retained `Command Status` sensor reports queued/ok/rejected outcomes.
 
 ## environment variable overrides
 
@@ -212,6 +212,8 @@ You can override common settings without editing the file:
 - `OWHB_DISCOVERY_MAX_PROBES`
 - `OWHB_DISCOVERY_MIN_IPV4_PREFIX`
 - `OWHB_DISCOVERY_ALLOW_PUBLIC_NETWORKS`
+
+Boolean environment values are strict: use `1`, `true`, `yes`, or `on` for enabled and `0`, `false`, `no`, or `off` for disabled. Unknown values fail config loading instead of silently changing safety behavior.
 
 ## Home Assistant notes
 

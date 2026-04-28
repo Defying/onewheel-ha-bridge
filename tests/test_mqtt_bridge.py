@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
@@ -9,6 +10,42 @@ from onewheel_ha_bridge.mqtt_bridge import HomeAssistantPublisher
 
 
 class MqttBridgeTests(unittest.TestCase):
+    def test_retained_command_message_is_ignored(self) -> None:
+        config = BridgeConfig(
+            vesc=VescConfig(),
+            mqtt=MqttConfig(),
+            home_assistant=HomeAssistantConfig(),
+            controls=ControlsConfig(enabled=True),
+        )
+        received: list[str] = []
+        publisher = HomeAssistantPublisher(config, received.append)
+
+        publisher._on_message(  # noqa: SLF001 - regression for MQTT callback behavior
+            None,
+            None,
+            SimpleNamespace(topic="onewheel/custom_xr/command", payload=b"allow_charging", retain=True),
+        )
+
+        self.assertEqual(received, [])
+
+    def test_non_retained_command_message_is_dispatched(self) -> None:
+        config = BridgeConfig(
+            vesc=VescConfig(),
+            mqtt=MqttConfig(),
+            home_assistant=HomeAssistantConfig(),
+            controls=ControlsConfig(enabled=True),
+        )
+        received: list[str] = []
+        publisher = HomeAssistantPublisher(config, received.append)
+
+        publisher._on_message(  # noqa: SLF001 - regression for MQTT callback behavior
+            None,
+            None,
+            SimpleNamespace(topic="onewheel/custom_xr/command", payload=b"allow_charging", retain=False),
+        )
+
+        self.assertEqual(received, ["allow_charging"])
+
     def test_command_status_payload_includes_board_identity(self) -> None:
         config = BridgeConfig(
             vesc=VescConfig(),

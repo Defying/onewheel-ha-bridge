@@ -43,6 +43,17 @@ allow_public_networks = false
         self.assertEqual(config.discovery.hosts, ("192.0.2.10", "192.0.2.11"))
         self.assertEqual(config.discovery.ports, (65102, 65103))
 
+    def test_env_booleans_accept_explicit_false_values(self) -> None:
+        for value in ("0", "false", "no", "off"):
+            with self.subTest(value=value), patch.dict(os.environ, {"OWHB_CONTROLS_REQUIRE_SAFE_STATE": value}, clear=True):
+                config = load_config()
+            self.assertFalse(config.controls.require_safe_state)
+
+    def test_env_boolean_typos_fail_closed(self) -> None:
+        with patch.dict(os.environ, {"OWHB_CONTROLS_REQUIRE_SAFE_STATE": "flase"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "OWHB_CONTROLS_REQUIRE_SAFE_STATE"):
+                load_config()
+
 
 if __name__ == "__main__":
     unittest.main()

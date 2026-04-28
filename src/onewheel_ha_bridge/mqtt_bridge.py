@@ -52,6 +52,9 @@ class HomeAssistantPublisher:
         expected_topic = command_topic(self.config.home_assistant, self.config.controls)
         if message.topic != expected_topic:
             return
+        if getattr(message, "retain", False):
+            LOG.warning("ignoring retained MQTT command on %s", message.topic)
+            return
         try:
             action = message.payload.decode("utf-8", "replace").strip()
         except Exception as exc:  # noqa: BLE001 - MQTT callback guard

@@ -6,8 +6,18 @@ from pathlib import Path
 import tomllib
 
 
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
+
+
 def _bool(value: str) -> bool:
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    normalized = value.strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    expected = ", ".join(sorted(_TRUE_VALUES | _FALSE_VALUES))
+    raise ValueError(f"invalid boolean {value!r}; expected one of: {expected}")
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -186,7 +196,10 @@ def _apply_env(data: dict) -> dict:
         raw = os.getenv(env_name)
         if raw is None:
             continue
-        data.setdefault(section, {})[key] = caster(raw)
+        try:
+            data.setdefault(section, {})[key] = caster(raw)
+        except ValueError as exc:
+            raise ValueError(f"invalid value for {env_name}: {exc}") from exc
     return data
 
 
