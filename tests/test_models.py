@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from onewheel_ha_bridge.models import BmsValues, RefloatRealtime, TelemetrySnapshot
+from onewheel_ha_bridge.models import BmsValues, RefloatLights, RefloatRealtime, TelemetrySnapshot
 
 
 def make_bms(current_a: float, balancing_state: list[bool] | None = None) -> BmsValues:
@@ -67,6 +67,25 @@ class ModelStateTests(unittest.TestCase):
         state = TelemetrySnapshot(bms=make_bms(0.0, [False, True, True])).to_state_dict()
         self.assertTrue(state["balancing_active"])
         self.assertEqual(state["balancing_cell_count"], 2)
+
+    def test_expanded_refloat_and_bms_state_fields(self) -> None:
+        refloat = make_refloat(False)
+        refloat.values.update({"motor.erpm": 1234.0, "imu.pitch": 1.25})
+        refloat.runtime_values.update({"balance_current": 2.5})
+        refloat.charging_values.update({"charging_voltage": 124.0})
+        state = TelemetrySnapshot(
+            bms=make_bms(0.0),
+            refloat_realtime=refloat,
+            refloat_lights=RefloatLights(leds_on=True, headlights_on=False, raw_flags=1),
+        ).to_state_dict()
+
+        self.assertEqual(state["soh_percent"], 100.0)
+        self.assertEqual(state["cell_2_v"], 4.06)
+        self.assertEqual(state["motor_erpm"], 1234.0)
+        self.assertEqual(state["imu_pitch_deg"], 1.25)
+        self.assertEqual(state["balance_current_a"], 2.5)
+        self.assertEqual(state["refloat_charging_voltage_v"], 124.0)
+        self.assertTrue(state["refloat_leds_on"])
 
 
 if __name__ == "__main__":

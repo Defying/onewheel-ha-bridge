@@ -1,5 +1,6 @@
 [vesc]
-host = "10.0.0.191"
+# Replace with your VESC TCP bridge host/IP.
+host = "127.0.0.1"
 port = 65102
 thor_can_id = 3
 bms_can_id = 4
@@ -8,6 +9,7 @@ poll_interval_seconds = 2.0
 static_refresh_every_polls = 30
 
 [mqtt]
+# Replace with your MQTT broker host/IP.
 host = "homeassistant.local"
 port = 1883
 username = ""
@@ -26,9 +28,12 @@ controller_name = "Thor400v2"
 bms_name = "ENNOID-XLITE-32-V4"
 
 [controls]
-# Guarded BMS write controls are disabled by default. Enable only if you accept
-# Home Assistant buttons for allow/disable charging and balancing.
+# Guarded write controls are disabled by default. Enable only if you accept
+# Home Assistant buttons for allow charging / force balancing.
 enabled = false
+# Refloat LED on/off buttons are a separate second opt-in because they use a
+# custom-app write path. They are shown only for supported Refloat 1.2+ profiles.
+refloat_led_controls_enabled = false
 # Defaults to "<home_assistant.base_topic>/command" if blank/commented.
 # command_topic = "onewheel/custom_xr/command"
 # Defaults to "<home_assistant.base_topic>/command_status" if blank/commented.

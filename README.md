@@ -1,6 +1,6 @@
 # onewheel-ha-bridge
 
-VESC TCP endpoint to Home Assistant bridge via MQTT discovery. Telemetry is read-only by default; optional BMS controls are guarded and opt-in.
+VESC TCP endpoint to Home Assistant bridge via MQTT discovery. Telemetry is read-only by default; optional BMS / Refloat LED controls are guarded and opt-in.
 
 this project polls a custom Onewheel's VESC/Refloat/BMS telemetry and publishes:
 - retained Home Assistant MQTT discovery payloads
@@ -15,7 +15,7 @@ The bridge uses these proven-safe reads:
 - `COMM_PING_CAN`
 - `COMM_FORWARD_CAN + COMM_GET_VALUES` for Thor controller telemetry
 - `COMM_BMS_GET_VALUES` for ENNOID BMS telemetry
-- `COMM_FORWARD_CAN + COMM_CUSTOM_APP_DATA` for Refloat `INFO`, `REALTIME_DATA_IDS`, and `REALTIME_DATA`
+- `COMM_FORWARD_CAN + COMM_CUSTOM_APP_DATA` for Refloat `INFO`, `REALTIME_DATA_IDS`, `REALTIME_DATA`, and supported `LIGHTS_CONTROL` state queries only when the separate Refloat LED gate is enabled
 
 It does **not** send duty/current/rpm/servo/config/update commands.
 
@@ -23,19 +23,20 @@ Optional BMS controls can be enabled explicitly with `[controls].enabled = true`
 - `COMM_FORWARD_CAN + COMM_BMS_SET_CHARGE_ALLOWED` with payload `1` to allow charging
 - `COMM_FORWARD_CAN + COMM_BMS_FORCE_BALANCE` with payload `1` to force balancing
 
-The verified ENNOID command handler does not implement safe false/disable semantics for charging or balancing in the same path, so the bridge rejects `disable_charging` and `disable_balancing` rather than guessing. The bridge also rejects control requests unless telemetry says the board is connected and not running, and the command topic is ignored entirely while controls are disabled.
+The verified ENNOID command handler does not implement safe false/disable semantics for charging or balancing in the same path, so the bridge rejects `disable_charging` and `disable_balancing` rather than guessing. Optional Refloat LED on/off controls require a second opt-in, are version/capability gated, and use only the documented stable Refloat `LIGHTS_CONTROL = 20` command; the older unstable `202` command map is intentionally not sent. The bridge also rejects control requests unless telemetry says the board is connected and not running, and the command topic is ignored entirely while controls are disabled.
 
 ## what shows up in Home Assistant
 
 The bridge auto-discovers a single device with entities including:
 - State of Charge
-- Pack Voltage / Pack Current
+- Pack Voltage / Pack Current / BMS SOH, totals, status, temps, humidity, and per-cell voltages
 - Min Cell / Max Cell / Cell Delta / Cell 19
+- Controller Voltage / Motor + input currents / ERPM / MOS temps / duty / controller counters
 - Controller Temp / Motor Temp
 - Speed (mph + km/h)
-- Duty Cycle
-- Charging / Wheelslip / Alerts Active / Ready / Running
+- Charging / Wheelslip / Darkride / Alerts Active / Ready / Running
 - Package State / Package Mode / Stop Condition / Setpoint Adjustment / Alert Reason / Footpad State
+- Refloat IMU/setpoint/current diagnostics, LED/headlight state, capabilities, and package identity
 - CAN Nodes / Firmware Fault Code / Controller Fault Code
 
 ## topics
@@ -58,7 +59,7 @@ The simplest broker for Home Assistant is the official Mosquitto add-on.
 ## setup
 
 ```bash
-cd /Volumes/Carve/Projects/onewheel-ha-bridge
+cd onewheel-ha-bridge
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -105,7 +106,7 @@ A small Docker setup lives at:
 Because the bridge talks directly to a LAN TCP endpoint and an MQTT broker, the example uses `network_mode: host`.
 
 ```bash
-cd /Volumes/Carve/Projects/onewheel-ha-bridge
+cd onewheel-ha-bridge
 cp config.example.toml config.toml
 # edit config.toml first
 cd examples
@@ -126,9 +127,22 @@ max_control_speed_mph = 0.5
 command_cooldown_seconds = 1.0
 ```
 
+To additionally expose Refloat LED on/off buttons, explicitly enable the second gate:
+
+```toml
+[controls]
+enabled = true
+refloat_led_controls_enabled = true
+require_safe_state = true
+max_control_speed_mph = 0.5
+command_cooldown_seconds = 1.0
+```
+
 Home Assistant buttons publish one of these payloads to `onewheel/custom_xr/command`:
 - `allow_charging` — verified implemented by ENNOID
 - `allow_balancing` — verified implemented by ENNOID as force-balance/all-time balancing
+- `refloat_leds_on` — optional second opt-in; supported Refloat 1.2+ stable lights command only
+- `refloat_leds_off` — optional second opt-in; supported Refloat 1.2+ stable lights command only
 - `disable_charging` — rejected; ENNOID's verified command path does not safely disable charging
 - `disable_balancing` — rejected; ENNOID's verified command path does not safely disable balancing
 
@@ -151,6 +165,7 @@ You can override common settings without editing the file:
 - `OWHB_DEVICE_NAME`
 - `OWHB_DEVICE_ID`
 - `OWHB_CONTROLS_ENABLED`
+- `OWHB_CONTROLS_REFLOAT_LEDS`
 - `OWHB_CONTROLS_COMMAND_TOPIC`
 - `OWHB_CONTROLS_STATUS_TOPIC`
 - `OWHB_CONTROLS_REQUIRE_SAFE_STATE`
@@ -163,14 +178,15 @@ You can override common settings without editing the file:
 - state and raw JSON are retained too, so the dashboard can repopulate quickly.
 - availability is driven by telemetry reachability: successful polls publish `online`; failed cycles publish `offline`.
 
-## live target assumptions baked into defaults
+## target assumptions
 
-Defaults match the currently observed setup:
-- VESC TCP bridge: `10.0.0.191:65102`
-- Thor controller CAN ID: `3`
-- ENNOID BMS CAN ID: `4`
+The defaults are intentionally generic. Copy `config.example.toml` to `config.toml` and set the values for your board:
+- VESC TCP bridge host/port
+- Thor/controller CAN ID
+- BMS CAN ID
+- MQTT broker host/credentials
 
-If those move, update the config.
+`config.toml` is gitignored so local deployment details do not get committed.
 
 ## development
 
@@ -184,5 +200,6 @@ python -m unittest discover -s tests -v
 ## caveats
 
 - Refloat runtime-only values are only populated while the package is actually `RUNNING`.
+- Refloat LED state queries and buttons are enabled only when controls are enabled, `refloat_led_controls_enabled = true`, and Refloat package info reports a supported stable lights protocol.
 - If the TCP bridge is flaky and resets connections, the client retries each query before marking the poll failed.
 - The bridge currently treats Refloat `motor.speed` as km/h and also publishes mph.

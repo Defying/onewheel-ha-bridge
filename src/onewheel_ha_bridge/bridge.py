@@ -9,13 +9,20 @@ from dataclasses import dataclass
 from .config import BridgeConfig
 from .models import TelemetrySnapshot
 from .mqtt_bridge import HomeAssistantPublisher
-from .protocol import VescProtocolError, VescTcpClient
+from .protocol import VescProtocolError, VescTcpClient, refloat_lights_control_supported
 
 LOG = logging.getLogger(__name__)
 
 ALLOWED_CONTROL_ACTIONS = {
     "allow_charging",
     "allow_balancing",
+    "refloat_leds_on",
+    "refloat_leds_off",
+}
+
+REFLOAT_LED_CONTROL_ACTIONS = {
+    "refloat_leds_on",
+    "refloat_leds_off",
 }
 
 UNSUPPORTED_CONTROL_ACTIONS = {
@@ -60,6 +67,10 @@ class OnewheelBridge:
             LOG.warning("ignoring control action %s because controls are disabled", action)
             self.publisher.publish_command_status(action, "rejected", "controls disabled")
             return
+        if action in REFLOAT_LED_CONTROL_ACTIONS and not self.config.controls.refloat_led_controls_enabled:
+            LOG.warning("ignoring Refloat LED control action %s because LED controls are disabled", action)
+            self.publisher.publish_command_status(action, "rejected", "Refloat LED controls disabled")
+            return
         self._command_queue.put(ControlCommand(action=action, received_at=time.time()))
         self.publisher.publish_command_status(action, "queued", "waiting for bridge loop")
 
@@ -81,11 +92,12 @@ class OnewheelBridge:
         snapshot.refloat_ids = self._cached_refloat_ids
 
         successes = 0
-        for name, func in (
+        telemetry_queries = [
             ("controller", lambda: self.client.get_controller_values(self.config.vesc.thor_can_id)),
             ("bms", self.client.get_bms_values),
             ("refloat", lambda: self.client.get_refloat_realtime(self.config.vesc.thor_can_id, self._cached_refloat_ids)),
-        ):
+        ]
+        for name, func in telemetry_queries:
             try:
                 value = func()
                 if name == "controller":
@@ -98,6 +110,13 @@ class OnewheelBridge:
             except Exception as exc:  # noqa: BLE001 - per-section telemetry resilience
                 snapshot.errors[name] = str(exc)
                 LOG.warning("%s poll failed: %s", name, exc)
+
+        if self.config.controls.refloat_led_controls_enabled and refloat_lights_control_supported(self._cached_refloat_info):
+            try:
+                snapshot.refloat_lights = self.client.get_refloat_lights(self.config.vesc.thor_can_id, self._cached_refloat_info)
+            except Exception as exc:  # noqa: BLE001 - optional Refloat lights telemetry
+                snapshot.errors["refloat_lights"] = str(exc)
+                LOG.warning("Refloat lights poll failed: %s", exc)
 
         if successes == 0:
             raise VescProtocolError("all telemetry queries failed")
@@ -128,10 +147,12 @@ class OnewheelBridge:
             raise VescProtocolError("telemetry unavailable")
         if not self.config.controls.require_safe_state:
             return
-        if not snapshot.bms:
+        if action in {"allow_charging", "allow_balancing"} and not snapshot.bms:
             raise VescProtocolError("BMS telemetry unavailable")
         if not snapshot.refloat_realtime:
             raise VescProtocolError("Refloat telemetry unavailable; cannot verify board is idle")
+        if action in REFLOAT_LED_CONTROL_ACTIONS and not snapshot.refloat_info:
+            raise VescProtocolError("Refloat package info unavailable; cannot verify LED command support")
 
         state = snapshot.to_state_dict()
         if state.get("running"):
@@ -141,8 +162,8 @@ class OnewheelBridge:
             raise VescProtocolError(f"speed {speed} mph exceeds control limit")
         if snapshot.controller and snapshot.controller.fault_code:
             raise VescProtocolError(f"controller fault {snapshot.controller.fault_code} active")
-        if snapshot.refloat_realtime.alerts_active and action.startswith("allow_"):
-            raise VescProtocolError("alerts/faults active; refusing allow action")
+        if snapshot.refloat_realtime.alerts_active:
+            raise VescProtocolError("alerts/faults active; refusing control action")
 
     def _execute_control_command(self, command: ControlCommand) -> None:
         now = time.time()
@@ -161,11 +182,17 @@ class OnewheelBridge:
         elif command.action == "allow_balancing":
             self.client.force_bms_balance(True, can_id=bms_can_id)
             message = f"force balancing enabled via BMS CAN {bms_can_id}"
+        elif command.action == "refloat_leds_on":
+            result = self.client.set_refloat_leds(True, can_id=self.config.vesc.thor_can_id, info=snapshot.refloat_info)
+            message = f"Refloat LEDs on via Thor CAN {self.config.vesc.thor_can_id}; flags={result.raw_flags}"
+        elif command.action == "refloat_leds_off":
+            result = self.client.set_refloat_leds(False, can_id=self.config.vesc.thor_can_id, info=snapshot.refloat_info)
+            message = f"Refloat LEDs off via Thor CAN {self.config.vesc.thor_can_id}; flags={result.raw_flags}"
         else:  # pragma: no cover - protected by enqueue validation
             raise VescProtocolError(f"unknown action {command.action}")
 
         self._last_command_at = time.time()
-        LOG.warning("executed guarded BMS control action: %s", command.action)
+        LOG.warning("executed guarded control action: %s", command.action)
         self.publisher.publish_command_status(command.action, "ok", message)
 
     def process_control_commands(self) -> None:

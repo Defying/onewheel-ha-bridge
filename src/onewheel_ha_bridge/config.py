@@ -12,7 +12,7 @@ def _bool(value: str) -> bool:
 
 @dataclass(slots=True)
 class VescConfig:
-    host: str = "10.0.0.191"
+    host: str = "127.0.0.1"
     port: int = 65102
     thor_can_id: int = 3
     bms_can_id: int = 4
@@ -45,10 +45,13 @@ class HomeAssistantConfig:
 
 @dataclass(slots=True)
 class ControlsConfig:
-    # Battery control writes are disabled unless explicitly enabled. When
-    # enabled, Home Assistant MQTT button entities can request only the guarded
-    # BMS actions implemented in bridge.py.
+    # Write controls are disabled unless explicitly enabled. When enabled,
+    # Home Assistant MQTT button entities can request only the guarded actions
+    # implemented in bridge.py. Refloat LED buttons have their own second
+    # opt-in because they are a custom-app write, even though they are much
+    # lower risk than motor/config/BMS disable surfaces.
     enabled: bool = False
+    refloat_led_controls_enabled: bool = False
     command_topic: str | None = None
     status_topic: str | None = None
     require_safe_state: bool = True
@@ -87,6 +90,7 @@ _ENV_MAP: dict[tuple[str, str], tuple[str, object]] = {
     ("home_assistant", "controller_name"): ("OWHB_CONTROLLER_NAME", str),
     ("home_assistant", "bms_name"): ("OWHB_BMS_NAME", str),
     ("controls", "enabled"): ("OWHB_CONTROLS_ENABLED", _bool),
+    ("controls", "refloat_led_controls_enabled"): ("OWHB_CONTROLS_REFLOAT_LEDS", _bool),
     ("controls", "command_topic"): ("OWHB_CONTROLS_COMMAND_TOPIC", str),
     ("controls", "status_topic"): ("OWHB_CONTROLS_STATUS_TOPIC", str),
     ("controls", "require_safe_state"): ("OWHB_CONTROLS_REQUIRE_SAFE_STATE", _bool),

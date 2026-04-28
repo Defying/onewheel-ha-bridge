@@ -8,7 +8,7 @@ import time
 from typing import Iterable
 
 from .config import VescConfig
-from .models import BmsValues, ControllerValues, FirmwareInfo, RefloatInfo, RefloatRealtime
+from .models import BmsValues, ControllerValues, FirmwareInfo, RefloatInfo, RefloatLights, RefloatRealtime
 
 LOG = logging.getLogger(__name__)
 
@@ -24,8 +24,14 @@ COMM_BMS_FORCE_BALANCE = 100
 
 REFLOAT_INTERFACE_ID = 101
 REFLOAT_INFO = 0
+REFLOAT_LIGHTS_CONTROL = 20
 REFLOAT_REALTIME_DATA = 31
 REFLOAT_REALTIME_IDS = 32
+
+REFLOAT_CAPABILITY_LEDS = 0x1
+REFLOAT_CAPABILITY_EXTERNAL_LEDS = 0x2
+REFLOAT_CAPABILITY_DATA_RECORDING = 0x80000000
+REFLOAT_LIGHTS_CONTROL_MIN_VERSION = (1, 2, 0)
 
 PACKAGE_STATE_MAP = {
     0: "DISABLED",
@@ -77,6 +83,40 @@ ALERT_REASON_MAP = {
     9: "IDLE",
     10: "ERROR",
 }
+
+
+def _version_tuple(version: str) -> tuple[int, int, int]:
+    main = version.split("-", 1)[0]
+    parts = main.split(".")
+    numbers: list[int] = []
+    for part in parts[:3]:
+        try:
+            numbers.append(int(part))
+        except ValueError:
+            numbers.append(0)
+    while len(numbers) < 3:
+        numbers.append(0)
+    return tuple(numbers)  # type: ignore[return-value]
+
+
+def refloat_lights_control_supported(info: RefloatInfo | None) -> bool:
+    """Return true only for the documented stable Refloat lights command.
+
+    Source inspection found two Refloat command maps: official Refloat uses the
+    documented stable `COMMAND_LIGHTS_CONTROL = 20` with a uint32 mask, while
+    the older float-accessories fork used unstable command 202 with a different
+    payload. Do not guess or send the unstable command from Home Assistant.
+    """
+
+    if info is None:
+        return False
+    if info.package_name != "Refloat":
+        return False
+    if info.command_version < 2:
+        return False
+    if not info.capabilities & REFLOAT_CAPABILITY_LEDS:
+        return False
+    return _version_tuple(info.package_version) >= REFLOAT_LIGHTS_CONTROL_MIN_VERSION
 
 
 class VescProtocolError(RuntimeError):
@@ -504,6 +544,44 @@ class VescTcpClient:
             capabilities=capabilities,
             extra_flags=extra_flags,
         )
+
+    def refloat_lights_control_supported(self, info: RefloatInfo | None) -> bool:
+        return refloat_lights_control_supported(info)
+
+    def get_refloat_lights(self, can_id: int, info: RefloatInfo | None) -> RefloatLights:
+        if not self.refloat_lights_control_supported(info):
+            raise VescProtocolError("Refloat LIGHTS_CONTROL command is not supported by this package profile")
+        return self._retry_decode(
+            "Refloat LIGHTS_CONTROL",
+            lambda: self.forward_can(can_id, bytes([COMM_CUSTOM_APP_DATA, REFLOAT_INTERFACE_ID, REFLOAT_LIGHTS_CONTROL])),
+            self.get_refloat_lights_from_payload,
+        )
+
+    def set_refloat_leds(self, leds_on: bool, can_id: int, info: RefloatInfo | None) -> RefloatLights:
+        if not self.refloat_lights_control_supported(info):
+            raise VescProtocolError("Refloat LIGHTS_CONTROL command is not supported by this package profile")
+        # Official Refloat LIGHTS_CONTROL v1 uses a uint32 mask followed by the
+        # flag values. Mask bit 0 updates only `leds_on`, preserving headlights.
+        mask = 0x1
+        flags = 0x1 if leds_on else 0x0
+        payload = (
+            bytes([COMM_CUSTOM_APP_DATA, REFLOAT_INTERFACE_ID, REFLOAT_LIGHTS_CONTROL])
+            + mask.to_bytes(4, "big")
+            + bytes([flags])
+        )
+        return self.get_refloat_lights_from_payload(self.forward_can(can_id, payload))
+
+    def get_refloat_lights_from_payload(self, payload: bytes) -> RefloatLights:
+        buffer = Buffer(payload)
+        command = buffer.u8()
+        interface_id = buffer.u8()
+        refloat_command = buffer.u8()
+        if command != COMM_CUSTOM_APP_DATA or interface_id != REFLOAT_INTERFACE_ID or refloat_command != REFLOAT_LIGHTS_CONTROL:
+            raise VescProtocolError("invalid Refloat LIGHTS_CONTROL response")
+        flags = buffer.u8()
+        if buffer.remaining:
+            LOG.debug("unused Refloat lights payload bytes: %s", buffer.remaining_bytes().hex())
+        return RefloatLights(leds_on=bool(flags & 0x1), headlights_on=bool(flags & 0x2), raw_flags=flags)
 
     def get_refloat_ids(self, can_id: int) -> dict[str, list[str]]:
         return self._retry_decode(

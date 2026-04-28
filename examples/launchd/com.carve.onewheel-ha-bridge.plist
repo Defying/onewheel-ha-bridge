@@ -7,13 +7,13 @@
 
     <key>ProgramArguments</key>
     <array>
-      <string>/Volumes/Carve/Projects/onewheel-ha-bridge/.venv/bin/onewheel-ha-bridge</string>
+      <string>/opt/onewheel-ha-bridge/.venv/bin/onewheel-ha-bridge</string>
       <string>--config</string>
-      <string>/Volumes/Carve/Projects/onewheel-ha-bridge/config.toml</string>
+      <string>/opt/onewheel-ha-bridge/config.toml</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Volumes/Carve/Projects/onewheel-ha-bridge</string>
+    <string>/opt/onewheel-ha-bridge</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -22,9 +22,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Volumes/Carve/Projects/onewheel-ha-bridge/bridge.log</string>
+    <string>/opt/onewheel-ha-bridge/bridge.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Volumes/Carve/Projects/onewheel-ha-bridge/bridge.log</string>
+    <string>/opt/onewheel-ha-bridge/bridge.log</string>
   </dict>
 </plist>
