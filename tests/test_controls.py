@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 from onewheel_ha_bridge.bridge import ALLOWED_CONTROL_ACTIONS, OnewheelBridge, UNSUPPORTED_CONTROL_ACTIONS
 from onewheel_ha_bridge.config import BridgeConfig, ControlsConfig, HomeAssistantConfig, MqttConfig, VescConfig
 from onewheel_ha_bridge.discovery import build_discovery_payloads, command_status_topic, command_topic
-from onewheel_ha_bridge.models import RefloatInfo, RefloatLights, RefloatRealtime, TelemetrySnapshot
-from onewheel_ha_bridge.protocol import VescTcpClient
+from onewheel_ha_bridge.models import BmsValues, RefloatInfo, RefloatLights, RefloatRealtime, TelemetrySnapshot
+from onewheel_ha_bridge.protocol import VescProtocolError, VescTcpClient
 
 
 class FakePublisher:
@@ -62,12 +62,37 @@ def ready_refloat_realtime() -> RefloatRealtime:
         stop_condition="NONE",
         sat="NONE",
         alert_reason="NONE",
-        values={},
+        values={"motor.speed": 0.0},
         runtime_values={},
         charging_values={},
         active_alert_mask_low=0,
         active_alert_mask_high=0,
         firmware_fault_code=0,
+    )
+
+
+def ready_bms(can_id: int = 4) -> BmsValues:
+    return BmsValues(
+        pack_voltage_v=122.0,
+        charge_voltage_v=122.0,
+        current_a=0.0,
+        current_ic_a=0.0,
+        amp_hours=0.0,
+        watt_hours=0.0,
+        cells_v=[4.0],
+        balancing_state=[False],
+        temps_c=[],
+        temp_ic_c=0.0,
+        temp_humidity_c=0.0,
+        humidity_pct=0.0,
+        temp_max_cell_c=0.0,
+        soc_ratio=0.5,
+        soh_ratio=1.0,
+        can_id=can_id,
+        amp_hours_charged_total=0.0,
+        watt_hours_charged_total=0.0,
+        amp_hours_discharged_total=0.0,
+        watt_hours_discharged_total=0.0,
     )
 
 
@@ -199,6 +224,36 @@ class ControlsTests(unittest.TestCase):
         set_leds.assert_called_once_with(True, can_id=3, info=bridge._last_snapshot.refloat_info)
         self.assertEqual([status for _, status, _ in fake.statuses], ["queued", "ok"])
 
+    def test_refloat_led_control_does_not_require_bms_can_validation(self) -> None:
+        bridge = OnewheelBridge(
+            BridgeConfig(
+                vesc=VescConfig(thor_can_id=3, bms_can_id=4),
+                mqtt=MqttConfig(),
+                home_assistant=HomeAssistantConfig(),
+                controls=ControlsConfig(enabled=True, refloat_led_controls_enabled=True, command_cooldown_seconds=0),
+            )
+        )
+        fake = FakePublisher()
+        bridge.publisher = fake  # type: ignore[assignment]
+        snapshot = TelemetrySnapshot(
+            can_nodes=[3],
+            refloat_info=supported_refloat_info(),
+            refloat_realtime=ready_refloat_realtime(),
+        )
+        bridge._cached_can_nodes = [3]
+        bridge._cached_refloat_info = snapshot.refloat_info
+
+        with (
+            patch.object(bridge, "refresh_static_info"),
+            patch.object(bridge, "poll_once", return_value=snapshot),
+            patch.object(bridge.client, "set_refloat_leds", return_value=RefloatLights(True, False, 1)) as set_leds,
+        ):
+            bridge.enqueue_control_command("refloat_leds_on")
+            bridge.process_control_commands()
+
+        set_leds.assert_called_once()
+        self.assertEqual([status for _, status, _ in fake.statuses], ["queued", "ok"])
+
     def test_control_always_repolls_before_write(self) -> None:
         bridge = OnewheelBridge(
             BridgeConfig(
@@ -235,7 +290,67 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual([status for _, status, _ in fake.statuses], ["queued", "rejected"])
         self.assertIn("RUNNING", fake.statuses[-1][2])
 
-    def test_bms_write_rejects_when_configured_bms_can_absent(self) -> None:
+    def test_control_rejects_when_speed_cannot_be_verified(self) -> None:
+        bridge = OnewheelBridge(
+            BridgeConfig(
+                vesc=VescConfig(thor_can_id=3, bms_can_id=4),
+                mqtt=MqttConfig(),
+                home_assistant=HomeAssistantConfig(),
+                controls=ControlsConfig(enabled=True, command_cooldown_seconds=0),
+            )
+        )
+        fake = FakePublisher()
+        bridge.publisher = fake  # type: ignore[assignment]
+        realtime = ready_refloat_realtime()
+        realtime.values.clear()
+        snapshot = TelemetrySnapshot(
+            can_nodes=[3, 4],
+            bms=ready_bms(4),
+            refloat_realtime=realtime,
+        )
+
+        with (
+            patch.object(bridge, "_snapshot_for_control", return_value=snapshot),
+            patch.object(bridge.client, "set_bms_charge_allowed") as set_allowed,
+        ):
+            bridge.enqueue_control_command("allow_charging")
+            bridge.process_control_commands()
+
+        set_allowed.assert_not_called()
+        self.assertEqual([status for _, status, _ in fake.statuses], ["queued", "rejected"])
+        self.assertIn("speed telemetry unavailable", fake.statuses[-1][2])
+
+    def test_control_rejects_when_speed_exceeds_limit_without_controller_values(self) -> None:
+        bridge = OnewheelBridge(
+            BridgeConfig(
+                vesc=VescConfig(thor_can_id=3, bms_can_id=4),
+                mqtt=MqttConfig(),
+                home_assistant=HomeAssistantConfig(),
+                controls=ControlsConfig(enabled=True, max_control_speed_mph=0.5, command_cooldown_seconds=0),
+            )
+        )
+        fake = FakePublisher()
+        bridge.publisher = fake  # type: ignore[assignment]
+        realtime = ready_refloat_realtime()
+        realtime.values["motor.speed"] = 10.0
+        snapshot = TelemetrySnapshot(
+            can_nodes=[3, 4],
+            bms=ready_bms(4),
+            refloat_realtime=realtime,
+        )
+
+        with (
+            patch.object(bridge, "_snapshot_for_control", return_value=snapshot),
+            patch.object(bridge.client, "set_bms_charge_allowed") as set_allowed,
+        ):
+            bridge.enqueue_control_command("allow_charging")
+            bridge.process_control_commands()
+
+        set_allowed.assert_not_called()
+        self.assertEqual([status for _, status, _ in fake.statuses], ["queued", "rejected"])
+        self.assertIn("exceeds control limit", fake.statuses[-1][2])
+
+    def test_bms_write_uses_reported_bms_can_when_config_differs(self) -> None:
         bridge = OnewheelBridge(
             BridgeConfig(
                 vesc=VescConfig(thor_can_id=3, bms_can_id=4),
@@ -255,9 +370,33 @@ class ControlsTests(unittest.TestCase):
             bridge.enqueue_control_command("allow_charging")
             bridge.process_control_commands()
 
+        set_allowed.assert_called_once_with(True, can_id=5)
+        self.assertEqual(bridge.config.vesc.bms_can_id, 5)
+        self.assertEqual([status for _, status, _ in fake.statuses], ["queued", "ok"])
+
+    def test_bms_write_rejects_when_reported_bms_can_absent(self) -> None:
+        bridge = OnewheelBridge(
+            BridgeConfig(
+                vesc=VescConfig(thor_can_id=3, bms_can_id=4),
+                mqtt=MqttConfig(),
+                home_assistant=HomeAssistantConfig(),
+                controls=ControlsConfig(enabled=True, require_safe_state=False, command_cooldown_seconds=0),
+            )
+        )
+        fake = FakePublisher()
+        bridge.publisher = fake  # type: ignore[assignment]
+        snapshot = TelemetrySnapshot(can_nodes=[3, 4], bms=Mock(can_id=5))
+
+        with (
+            patch.object(bridge, "_snapshot_for_control", return_value=snapshot),
+            patch.object(bridge.client, "set_bms_charge_allowed") as set_allowed,
+        ):
+            bridge.enqueue_control_command("allow_charging")
+            bridge.process_control_commands()
+
         set_allowed.assert_not_called()
         self.assertEqual([status for _, status, _ in fake.statuses], ["queued", "rejected"])
-        self.assertIn("configured BMS CAN 4 not present", fake.statuses[-1][2])
+        self.assertIn("BMS telemetry CAN 5 not present", fake.statuses[-1][2])
 
     def test_refloat_lights_poll_requires_second_opt_in(self) -> None:
         bridge = OnewheelBridge(
@@ -278,6 +417,74 @@ class ControlsTests(unittest.TestCase):
             bridge.poll_once()
 
         get_lights.assert_not_called()
+
+    def test_controller_read_resolves_board_specific_can_id(self) -> None:
+        bridge = OnewheelBridge(
+            BridgeConfig(
+                vesc=VescConfig(thor_can_id=3),
+                mqtt=MqttConfig(),
+                home_assistant=HomeAssistantConfig(),
+                controls=ControlsConfig(),
+            )
+        )
+        bridge._cached_can_nodes = [7]
+        expected = object()
+
+        def get_controller_values(can_id: int):
+            if can_id == 7:
+                return expected
+            raise VescProtocolError(f"no controller at CAN {can_id}")
+
+        with patch.object(bridge.client, "get_controller_values", side_effect=get_controller_values) as read:
+            self.assertIs(bridge._read_controller_values(), expected)
+
+        self.assertEqual([call.args[0] for call in read.call_args_list], [3, 7])
+        self.assertEqual(bridge.config.vesc.thor_can_id, 7)
+
+    def test_static_refresh_resolves_board_specific_refloat_can_id(self) -> None:
+        bridge = OnewheelBridge(
+            BridgeConfig(
+                vesc=VescConfig(thor_can_id=3),
+                mqtt=MqttConfig(),
+                home_assistant=HomeAssistantConfig(),
+                controls=ControlsConfig(),
+            )
+        )
+
+        def get_refloat_info(can_id: int):
+            if can_id == 8:
+                return supported_refloat_info()
+            raise VescProtocolError(f"no Refloat at CAN {can_id}")
+
+        with (
+            patch.object(bridge.client, "get_fw_version", return_value=None),
+            patch.object(bridge.client, "ping_can", return_value=[8]),
+            patch.object(bridge.client, "get_refloat_info", side_effect=get_refloat_info) as info,
+            patch.object(bridge.client, "get_refloat_ids", return_value={"realtime": [], "runtime": []}) as ids,
+        ):
+            bridge.refresh_static_info(force=True)
+
+        self.assertEqual([call.args[0] for call in info.call_args_list], [3, 8])
+        ids.assert_called_once_with(8)
+        self.assertEqual(bridge.config.vesc.thor_can_id, 8)
+
+    def test_control_queue_is_bounded(self) -> None:
+        bridge = OnewheelBridge(
+            BridgeConfig(
+                vesc=VescConfig(),
+                mqtt=MqttConfig(),
+                home_assistant=HomeAssistantConfig(),
+                controls=ControlsConfig(enabled=True),
+            )
+        )
+        fake = FakePublisher()
+        bridge.publisher = fake  # type: ignore[assignment]
+
+        for _ in range(17):
+            bridge.enqueue_control_command("allow_charging")
+
+        self.assertEqual(bridge._command_queue.qsize(), 16)
+        self.assertEqual(fake.statuses[-1], ("allow_charging", "rejected", "command queue full"))
 
     def test_bms_write_payloads(self) -> None:
         client = VescTcpClient(VescConfig())

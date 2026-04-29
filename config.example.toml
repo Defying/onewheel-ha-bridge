@@ -16,6 +16,13 @@ username = ""
 password = ""
 client_id = "onewheel-ha-bridge"
 keepalive_seconds = 30
+# Set tls_enabled=true for MQTTS brokers. Leave cert paths blank to use the
+# system trust store, or set ca/cert/key paths for private PKI/client auth.
+tls_enabled = false
+tls_ca_certs = ""
+tls_certfile = ""
+tls_keyfile = ""
+tls_insecure = false
 
 [home_assistant]
 discovery_prefix = "homeassistant"

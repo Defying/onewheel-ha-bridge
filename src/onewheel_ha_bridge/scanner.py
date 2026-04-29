@@ -44,7 +44,7 @@ def slugify(value: str, fallback: str = "vesc") -> str:
 
 
 def _short_hash(value: str) -> str:
-    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:8]
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
 
 
 def board_id_for_endpoint(endpoint: VescTcpEndpoint) -> str:

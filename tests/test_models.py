@@ -63,6 +63,13 @@ class ModelStateTests(unittest.TestCase):
         self.assertFalse(TelemetrySnapshot(bms=make_bms(0.05)).to_state_dict()["charging"])
         self.assertFalse(TelemetrySnapshot(bms=make_bms(-1.0)).to_state_dict()["charging"])
 
+    def test_refloat_speed_is_available_without_controller_values(self) -> None:
+        refloat = make_refloat(False)
+        refloat.values["motor.speed"] = 10.0
+        state = TelemetrySnapshot(refloat_realtime=refloat).to_state_dict()
+        self.assertEqual(state["speed_kph"], 10.0)
+        self.assertEqual(state["speed_mph"], 6.214)
+
     def test_balancing_state_is_derived_from_bms_bleed_bytes(self) -> None:
         state = TelemetrySnapshot(bms=make_bms(0.0, [False, True, True])).to_state_dict()
         self.assertTrue(state["balancing_active"])

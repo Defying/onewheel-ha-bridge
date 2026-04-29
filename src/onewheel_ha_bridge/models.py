@@ -216,10 +216,17 @@ class TelemetrySnapshot:
         return payload
 
     def to_state_dict(self) -> dict:
+        speed_kph = None
+        speed_mph = None
+        if self.refloat_realtime:
+            speed_kph = self.refloat_realtime.values.get("motor.speed")
+            speed_mph = speed_kph * 0.621371 if speed_kph is not None else None
         state = {
             "timestamp": self.collected_at.isoformat(),
             "connected": self.connected,
             "can_nodes_csv": ",".join(str(node) for node in self.can_nodes),
+            "speed_kph": speed_kph,
+            "speed_mph": round(speed_mph, 3) if speed_mph is not None else None,
         }
         if self.firmware:
             state.update(
@@ -302,11 +309,6 @@ class TelemetrySnapshot:
             for index, temp_c in enumerate(self.bms.temps_c, start=1):
                 state[f"bms_temp_{index}_c"] = temp_c
         if self.controller:
-            speed_kph = None
-            speed_mph = None
-            if self.refloat_realtime:
-                speed_kph = self.refloat_realtime.values.get("motor.speed")
-                speed_mph = speed_kph * 0.621371 if speed_kph is not None else None
             state.update(
                 {
                     "controller_temp_c": self.controller.temp_fet_c,
@@ -319,8 +321,6 @@ class TelemetrySnapshot:
                     "duty_cycle_ratio": self.controller.duty_cycle_ratio,
                     "duty_cycle_pct": round(self.controller.duty_cycle_ratio * 100.0, 2),
                     "controller_rpm": self.controller.rpm,
-                    "speed_kph": speed_kph,
-                    "speed_mph": round(speed_mph, 3) if speed_mph is not None else None,
                     "controller_amp_hours": self.controller.amp_hours,
                     "controller_amp_hours_charged": self.controller.amp_hours_charged,
                     "controller_watt_hours": self.controller.watt_hours,

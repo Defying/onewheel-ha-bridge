@@ -13,6 +13,8 @@ from .protocol import VescProtocolError, VescTcpClient, refloat_lights_control_s
 
 LOG = logging.getLogger(__name__)
 
+MAX_CONTROL_QUEUE_SIZE = 16
+
 ALLOWED_CONTROL_ACTIONS = {
     "allow_charging",
     "allow_balancing",
@@ -41,7 +43,7 @@ class OnewheelBridge:
     def __init__(self, config: BridgeConfig):
         self.config = config
         self.client = VescTcpClient(config.vesc)
-        self._command_queue: queue.Queue[ControlCommand] = queue.Queue()
+        self._command_queue: queue.Queue[ControlCommand] = queue.Queue(maxsize=MAX_CONTROL_QUEUE_SIZE)
         self.publisher = HomeAssistantPublisher(config, self.enqueue_control_command)
         self._cached_firmware = None
         self._cached_can_nodes: list[int] = []
@@ -71,18 +73,79 @@ class OnewheelBridge:
             LOG.warning("ignoring Refloat LED control action %s because LED controls are disabled", action)
             self.publisher.publish_command_status(action, "rejected", "Refloat LED controls disabled")
             return
-        self._command_queue.put(ControlCommand(action=action, received_at=time.time()))
+        try:
+            self._command_queue.put_nowait(ControlCommand(action=action, received_at=time.time()))
+        except queue.Full:
+            LOG.warning("rejecting control action %s because command queue is full", action)
+            self.publisher.publish_command_status(action, "rejected", "command queue full")
+            return
         self.publisher.publish_command_status(action, "queued", "waiting for bridge loop")
 
-    def refresh_static_info(self, force: bool = False) -> None:
+    def _thor_can_candidates(self) -> list[int]:
+        candidates: list[int] = []
+
+        def add(can_id: int) -> None:
+            if can_id not in candidates:
+                candidates.append(can_id)
+
+        add(self.config.vesc.thor_can_id)
+        for can_id in self._cached_can_nodes:
+            add(can_id)
+        return candidates
+
+    def _read_with_thor_can_candidates(self, label: str, reader):  # noqa: ANN001, ANN202
+        last_error: Exception | None = None
+        for can_id in self._thor_can_candidates():
+            try:
+                value = reader(can_id)
+            except Exception as exc:  # noqa: BLE001 - try alternate CAN roles
+                last_error = exc
+                LOG.debug("%s read failed for CAN %s: %s", label, can_id, exc)
+                continue
+            if can_id != self.config.vesc.thor_can_id:
+                LOG.info("resolved %s CAN ID for %s from %s to %s", label, self.config.home_assistant.device_id, self.config.vesc.thor_can_id, can_id)
+                self.config.vesc.thor_can_id = can_id
+            return value
+        raise VescProtocolError(f"{label} failed for CAN candidates {self._thor_can_candidates()}: {last_error}")
+
+    def _read_controller_values(self):
+        return self._read_with_thor_can_candidates("controller telemetry", self.client.get_controller_values)
+
+    def _read_refloat_info(self):
+        return self._read_with_thor_can_candidates("Refloat INFO", self.client.get_refloat_info)
+
+    def _read_refloat_ids(self):
+        return self._read_with_thor_can_candidates("Refloat IDs", self.client.get_refloat_ids)
+
+    def _read_refloat_realtime(self):
+        return self._read_with_thor_can_candidates(
+            "Refloat realtime",
+            lambda can_id: self.client.get_refloat_realtime(can_id, self._cached_refloat_ids),
+        )
+
+    def _read_refloat_lights(self):
+        return self._read_with_thor_can_candidates(
+            "Refloat lights",
+            lambda can_id: self.client.get_refloat_lights(can_id, self._cached_refloat_info),
+        )
+
+    def refresh_static_info(self, force: bool = False, best_effort: bool = False) -> None:
+        def run(label: str, func) -> None:  # noqa: ANN001
+            try:
+                func()
+            except Exception as exc:
+                if not best_effort:
+                    raise
+                LOG.warning("%s static telemetry refresh failed: %s", label, exc)
+
         if force or self._cached_firmware is None:
-            self._cached_firmware = self.client.get_fw_version()
+            run("firmware", lambda: setattr(self, "_cached_firmware", self.client.get_fw_version()))
         if force or not self._cached_can_nodes or self._poll_count % max(self.config.vesc.static_refresh_every_polls, 1) == 0:
-            self._cached_can_nodes = self.client.ping_can()
+            run("CAN node", lambda: setattr(self, "_cached_can_nodes", self.client.ping_can()))
         if force or self._cached_refloat_info is None:
-            self._cached_refloat_info = self.client.get_refloat_info(self.config.vesc.thor_can_id)
+            run("Refloat info", lambda: setattr(self, "_cached_refloat_info", self._read_refloat_info()))
         if force or not self._cached_refloat_ids:
-            self._cached_refloat_ids = self.client.get_refloat_ids(self.config.vesc.thor_can_id)
+            run("Refloat IDs", lambda: setattr(self, "_cached_refloat_ids", self._read_refloat_ids()))
 
     def poll_once(self) -> TelemetrySnapshot:
         snapshot = TelemetrySnapshot()
@@ -93,9 +156,9 @@ class OnewheelBridge:
 
         successes = 0
         telemetry_queries = [
-            ("controller", lambda: self.client.get_controller_values(self.config.vesc.thor_can_id)),
+            ("controller", self._read_controller_values),
             ("bms", self.client.get_bms_values),
-            ("refloat", lambda: self.client.get_refloat_realtime(self.config.vesc.thor_can_id, self._cached_refloat_ids)),
+            ("refloat", self._read_refloat_realtime),
         ]
         for name, func in telemetry_queries:
             try:
@@ -113,7 +176,7 @@ class OnewheelBridge:
 
         if self.config.controls.refloat_led_controls_enabled and refloat_lights_control_supported(self._cached_refloat_info):
             try:
-                snapshot.refloat_lights = self.client.get_refloat_lights(self.config.vesc.thor_can_id, self._cached_refloat_info)
+                snapshot.refloat_lights = self._read_refloat_lights()
             except Exception as exc:  # noqa: BLE001 - optional Refloat lights telemetry
                 snapshot.errors["refloat_lights"] = str(exc)
                 LOG.warning("Refloat lights poll failed: %s", exc)
@@ -132,10 +195,16 @@ class OnewheelBridge:
 
     def _effective_bms_can_id(self, snapshot: TelemetrySnapshot) -> int:
         configured = self.config.vesc.bms_can_id
+        if snapshot.bms:
+            reported = snapshot.bms.can_id
+            if reported not in snapshot.can_nodes:
+                raise VescProtocolError(f"BMS telemetry CAN {reported} not present in CAN node list")
+            if reported != configured:
+                LOG.info("resolved BMS CAN ID for %s from %s to %s", self.config.home_assistant.device_id, configured, reported)
+                self.config.vesc.bms_can_id = reported
+            return reported
         if configured not in snapshot.can_nodes:
             raise VescProtocolError(f"configured BMS CAN {configured} not present in CAN node list")
-        if snapshot.bms and snapshot.bms.can_id != configured:
-            raise VescProtocolError(f"BMS telemetry CAN {snapshot.bms.can_id} does not match configured BMS CAN {configured}")
         return configured
 
     def _validate_control_snapshot(self, action: str, snapshot: TelemetrySnapshot) -> None:
@@ -154,6 +223,8 @@ class OnewheelBridge:
         if state.get("running"):
             raise VescProtocolError("board is RUNNING")
         speed = state.get("speed_mph")
+        if speed is None:
+            raise VescProtocolError("speed telemetry unavailable; cannot verify board is stationary")
         if speed is not None and abs(float(speed)) > self.config.controls.max_control_speed_mph:
             raise VescProtocolError(f"speed {speed} mph exceeds control limit")
         if snapshot.controller and snapshot.controller.fault_code:
@@ -170,12 +241,12 @@ class OnewheelBridge:
         snapshot = self._snapshot_for_control()
         self._validate_control_snapshot(command.action, snapshot)
 
-        bms_can_id = self._effective_bms_can_id(snapshot)
-
         if command.action == "allow_charging":
+            bms_can_id = self._effective_bms_can_id(snapshot)
             self.client.set_bms_charge_allowed(True, can_id=bms_can_id)
             message = f"charging allowed via BMS CAN {bms_can_id}"
         elif command.action == "allow_balancing":
+            bms_can_id = self._effective_bms_can_id(snapshot)
             self.client.force_bms_balance(True, can_id=bms_can_id)
             message = f"force balancing enabled via BMS CAN {bms_can_id}"
         elif command.action == "refloat_leds_on":
@@ -237,7 +308,7 @@ class OnewheelBridge:
         try:
             self.process_control_commands()
             if self._poll_count % max(self.config.vesc.static_refresh_every_polls, 1) == 0:
-                self.refresh_static_info(force=True)
+                self.refresh_static_info(force=True, best_effort=True)
             snapshot = self._attach_static_info(self.poll_once())
             self._last_snapshot = snapshot
             if not self._discovery_published or self._poll_count % max(self.config.vesc.static_refresh_every_polls, 1) == 0:

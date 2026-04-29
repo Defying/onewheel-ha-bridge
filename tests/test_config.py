@@ -54,6 +54,25 @@ allow_public_networks = false
             with self.assertRaisesRegex(ValueError, "OWHB_CONTROLS_REQUIRE_SAFE_STATE"):
                 load_config()
 
+    def test_mqtt_tls_blank_paths_normalize_to_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                """
+[mqtt]
+tls_enabled = true
+tls_ca_certs = ""
+tls_certfile = ""
+tls_keyfile = ""
+""".strip()
+            )
+            config = load_config(path)
+
+        self.assertTrue(config.mqtt.tls_enabled)
+        self.assertIsNone(config.mqtt.tls_ca_certs)
+        self.assertIsNone(config.mqtt.tls_certfile)
+        self.assertIsNone(config.mqtt.tls_keyfile)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,8 @@ from .models import TelemetrySnapshot
 
 LOG = logging.getLogger(__name__)
 
+MAX_COMMAND_PAYLOAD_BYTES = 128
+
 
 class HomeAssistantPublisher:
     def __init__(self, config: BridgeConfig, command_handler: Callable[[str], None] | None = None):
@@ -24,6 +26,13 @@ class HomeAssistantPublisher:
         self._client.enable_logger(LOG)
         self._client.reconnect_delay_set(min_delay=1, max_delay=30)
         self._client.will_set(availability_topic(config.home_assistant), payload="offline", retain=True)
+        if config.mqtt.tls_enabled:
+            self._client.tls_set(
+                ca_certs=config.mqtt.tls_ca_certs,
+                certfile=config.mqtt.tls_certfile,
+                keyfile=config.mqtt.tls_keyfile,
+            )
+            self._client.tls_insecure_set(config.mqtt.tls_insecure)
         if config.mqtt.username:
             self._client.username_pw_set(config.mqtt.username, config.mqtt.password)
         self._client.on_connect = self._on_connect
@@ -55,6 +64,9 @@ class HomeAssistantPublisher:
         if getattr(message, "retain", False):
             LOG.warning("ignoring retained MQTT command on %s", message.topic)
             return
+        if len(message.payload) > MAX_COMMAND_PAYLOAD_BYTES:
+            LOG.warning("ignoring oversized MQTT command on %s", message.topic)
+            return
         try:
             action = message.payload.decode("utf-8", "replace").strip()
         except Exception as exc:  # noqa: BLE001 - MQTT callback guard
@@ -70,7 +82,11 @@ class HomeAssistantPublisher:
 
     def disconnect(self) -> None:
         try:
-            self.publish_availability(False)
+            publish_info = self.publish_availability(False)
+            try:
+                publish_info.wait_for_publish(timeout=2)
+            except RuntimeError as exc:
+                LOG.debug("offline availability publish was not confirmed before disconnect: %s", exc)
         finally:
             self._client.loop_stop()
             self._client.disconnect()
@@ -81,7 +97,7 @@ class HomeAssistantPublisher:
 
     def publish_availability(self, online: bool) -> None:
         payload = "online" if online else "offline"
-        self._client.publish(availability_topic(self.config.home_assistant), payload, retain=True, qos=1)
+        return self._client.publish(availability_topic(self.config.home_assistant), payload, retain=True, qos=1)
 
     def publish_command_status(self, action: str, status: str, message: str) -> None:
         payload = {

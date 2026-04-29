@@ -46,6 +46,61 @@ class MqttBridgeTests(unittest.TestCase):
 
         self.assertEqual(received, ["allow_charging"])
 
+    def test_oversized_command_message_is_ignored(self) -> None:
+        config = BridgeConfig(
+            vesc=VescConfig(),
+            mqtt=MqttConfig(),
+            home_assistant=HomeAssistantConfig(),
+            controls=ControlsConfig(enabled=True),
+        )
+        received: list[str] = []
+        publisher = HomeAssistantPublisher(config, received.append)
+
+        publisher._on_message(  # noqa: SLF001 - regression for MQTT callback behavior
+            None,
+            None,
+            SimpleNamespace(topic="onewheel/custom_xr/command", payload=b"a" * 129, retain=False),
+        )
+
+        self.assertEqual(received, [])
+
+    def test_tls_config_is_applied_to_mqtt_client(self) -> None:
+        config = BridgeConfig(
+            vesc=VescConfig(),
+            mqtt=MqttConfig(
+                tls_enabled=True,
+                tls_ca_certs="/ca.pem",
+                tls_certfile="/cert.pem",
+                tls_keyfile="/key.pem",
+                tls_insecure=True,
+            ),
+            home_assistant=HomeAssistantConfig(),
+            controls=ControlsConfig(enabled=False),
+        )
+        client = Mock()
+        with MockClient(client):
+            HomeAssistantPublisher(config)
+
+        client.tls_set.assert_called_once_with(ca_certs="/ca.pem", certfile="/cert.pem", keyfile="/key.pem")
+        client.tls_insecure_set.assert_called_once_with(True)
+
+    def test_disconnect_waits_for_offline_availability_publish(self) -> None:
+        config = BridgeConfig(
+            vesc=VescConfig(),
+            mqtt=MqttConfig(),
+            home_assistant=HomeAssistantConfig(),
+            controls=ControlsConfig(enabled=False),
+        )
+        publisher = HomeAssistantPublisher(config)
+        publish_info = Mock()
+        publisher._client.publish = Mock(return_value=publish_info)  # type: ignore[method-assign]
+        publisher._client.loop_stop = Mock()  # type: ignore[method-assign]
+        publisher._client.disconnect = Mock()  # type: ignore[method-assign]
+
+        publisher.disconnect()
+
+        publish_info.wait_for_publish.assert_called_once_with(timeout=2)
+
     def test_command_status_payload_includes_board_identity(self) -> None:
         config = BridgeConfig(
             vesc=VescConfig(),
@@ -64,6 +119,21 @@ class MqttBridgeTests(unittest.TestCase):
         self.assertEqual(decoded["device_id"], "custom_onewheel_vesc_child")
         self.assertEqual(decoded["base_topic"], "onewheel/custom_xr/vesc_child")
         self.assertEqual(decoded["action"], "allow_charging")
+
+
+class MockClient:
+    def __init__(self, client: Mock) -> None:
+        self.client = client
+        self.patch = None
+
+    def __enter__(self):
+        from unittest.mock import patch
+
+        self.patch = patch("onewheel_ha_bridge.mqtt_bridge.mqtt.Client", return_value=self.client)
+        return self.patch.__enter__()
+
+    def __exit__(self, exc_type, exc, tb):
+        return self.patch.__exit__(exc_type, exc, tb)
 
 
 if __name__ == "__main__":

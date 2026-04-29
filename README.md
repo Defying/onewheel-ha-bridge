@@ -61,9 +61,7 @@ The simplest broker for Home Assistant is the official Mosquitto add-on.
 
 ```bash
 cd onewheel-ha-bridge
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+uv sync
 cp config.example.toml config.toml
 ```
 
@@ -72,11 +70,14 @@ Edit `config.toml`:
 - MQTT host / port / credentials
 - Home Assistant naming/topics if desired
 
+For MQTTS brokers, set `mqtt.tls_enabled = true`. Leave the certificate path
+fields blank to use the system trust store, or set `tls_ca_certs`,
+`tls_certfile`, and `tls_keyfile` for private PKI/client certificate setups.
+
 ## test a single read-only poll
 
 ```bash
-source .venv/bin/activate
-onewheel-ha-bridge --config config.toml --once --raw
+uv run onewheel-ha-bridge --config config.toml --once --raw
 ```
 
 That prints one nested telemetry snapshot and exits.
@@ -84,8 +85,7 @@ That prints one nested telemetry snapshot and exits.
 ## run the bridge
 
 ```bash
-source .venv/bin/activate
-onewheel-ha-bridge --config config.toml
+uv run onewheel-ha-bridge --config config.toml
 ```
 
 Once it connects and publishes discovery, Home Assistant should auto-create the device.
@@ -109,6 +109,7 @@ allow_public_networks = false
 Safety/backward-compat behavior:
 - the configured `[vesc]` host keeps the existing `device_id`, topics, and controls behavior.
 - auto-discovered boards get suffixed topics like `<base_topic>/vesc_<uuid>` and unique MQTT client IDs.
+- each board resolves forwarded controller/Refloat telemetry against its own `COMM_PING_CAN` node list, so discovered boards do not have to share the primary board's controller CAN ID. Guarded BMS writes use fresh BMS telemetry plus that board's CAN node list before choosing the BMS CAN target.
 - auto-discovered boards are telemetry-only; controls are intentionally not enabled from discovery.
 - discovered boards always use their own derived command/status topics; custom primary command topics and Refloat LED controls are not copied onto discovered boards.
 - discovery never sends motor/config/write commands; probes are firmware-version reads only.
@@ -191,6 +192,11 @@ You can override common settings without editing the file:
 - `OWHB_MQTT_PORT`
 - `OWHB_MQTT_USERNAME`
 - `OWHB_MQTT_PASSWORD`
+- `OWHB_MQTT_TLS_ENABLED`
+- `OWHB_MQTT_TLS_CA_CERTS`
+- `OWHB_MQTT_TLS_CERTFILE`
+- `OWHB_MQTT_TLS_KEYFILE`
+- `OWHB_MQTT_TLS_INSECURE`
 - `OWHB_HA_BASE_TOPIC`
 - `OWHB_DEVICE_NAME`
 - `OWHB_DEVICE_ID`
@@ -236,8 +242,7 @@ The defaults are intentionally generic. Copy `config.example.toml` to `config.to
 Run tests with:
 
 ```bash
-source .venv/bin/activate
-python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
 ## caveats

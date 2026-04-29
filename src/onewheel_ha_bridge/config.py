@@ -47,6 +47,16 @@ class MqttConfig:
     password: str | None = None
     client_id: str = "onewheel-ha-bridge"
     keepalive_seconds: int = 30
+    tls_enabled: bool = False
+    tls_ca_certs: str | None = None
+    tls_certfile: str | None = None
+    tls_keyfile: str | None = None
+    tls_insecure: bool = False
+
+    def __post_init__(self) -> None:
+        for key in ("tls_ca_certs", "tls_certfile", "tls_keyfile"):
+            if getattr(self, key) == "":
+                setattr(self, key, None)
 
 
 @dataclass(slots=True)
@@ -145,6 +155,11 @@ _ENV_MAP: dict[tuple[str, str], tuple[str, object]] = {
     ("mqtt", "password"): ("OWHB_MQTT_PASSWORD", str),
     ("mqtt", "client_id"): ("OWHB_MQTT_CLIENT_ID", str),
     ("mqtt", "keepalive_seconds"): ("OWHB_MQTT_KEEPALIVE", int),
+    ("mqtt", "tls_enabled"): ("OWHB_MQTT_TLS_ENABLED", _bool),
+    ("mqtt", "tls_ca_certs"): ("OWHB_MQTT_TLS_CA_CERTS", str),
+    ("mqtt", "tls_certfile"): ("OWHB_MQTT_TLS_CERTFILE", str),
+    ("mqtt", "tls_keyfile"): ("OWHB_MQTT_TLS_KEYFILE", str),
+    ("mqtt", "tls_insecure"): ("OWHB_MQTT_TLS_INSECURE", _bool),
     ("home_assistant", "discovery_prefix"): ("OWHB_HA_DISCOVERY_PREFIX", str),
     ("home_assistant", "base_topic"): ("OWHB_HA_BASE_TOPIC", str),
     ("home_assistant", "device_name"): ("OWHB_DEVICE_NAME", str),
